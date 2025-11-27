@@ -79,20 +79,20 @@ TBA
 **DEFAULT** - jest to podstawowe zachowanie jednostki, oprócz **Flagship**, jeśli nie ma dowódcy.
 
 
-**Flagship**
+**Flagship**:
 Jeśli na mapie każdy **Battleship** jest przypisany pod ten okręt.
 Za jego zachowanie jest odpowiedzialna **Osobowość**.
 Losowo lub na podstawie sytuacji okręt wydaje rozkazy z **Taktyki**.
 Okręt jest w stanie widzieć całą mapę więc morze analizować sytuację na niej.
 Przed zniszczeniem wysyła lokalizację najbliższego **Battleship** wszystkim **Squadrons** pod jego dowodzeniem.
 
-**Battleship**
+**Battleship**:
 Jeśli pod dowodzeniem, wykonuje rozkazy **Flagship**.
 Jeśli cel do ataku to wysyła rozkaz do **Bomber** do ataku, atakuję również swoimi **Batteries**, **Fighters** i **Elite Fighters** skupiają się na innych wrogich **Squadrons**
 Przed zniszczeniem wysyła lokalizację najbliższego **Battleship** wszystkim **Squadrons** pod jego dowodzeniem.
 Jeśli nie ma **Flagship** na mapie jego zachowanie jest DEFAULT, czyli wchodzi w stan **Patrol**. Jeśli napotka sojuszniczy **Battleship** jeden z nich zostaje **Lider**'em i się **Group**'ują. Każda jednostka w grupie dostosowywane się do prędkości najwolniejszej jednostki i podążają za liderem. Każdy statek w grupie dzieli **DR**. Jeśli wróg napotkany grupa zaczyna go atakować zgodnie z priorytetem słabości.
 
-**Squadrons**
+**Squadrons**:
 Jeśli pod dowodzeniem, wykonuje rozkazy dowódcy (**Flagship** lub **Battleship**)
 Jeśli cel nie określony (Move Attack) atakuje przeciwnika zgodnie z priorytetem słabości.
 Jeśli dowódca został zniszczony i przesłał ostatnie koordynaty najbliższego **Flagship** lub **Battleship**, przejdź tam i wejdź pod dowodzenie tego okrętu. Jeśli nie to przejdź w DEFAULT, czyli wejdź w Patrol. Jeśli napotka **Flagship** lub **Battleship** wejdź pod dowodzenie.
@@ -130,8 +130,19 @@ CF -- Squadrons --> CSF[...]
 ```
 
 ### Mapa, Koordynaty, Kontrola
-- 2D siatka jako mapa regionów
-- pozycje (x,y) jednostkach w regionach, wykrywanie **DR** okrężne
+- **mapa**:
+	Mapą byłą by 2-wymiarowa plansza NxM, na której jednostki dzieliły by przestrzeń i jednostki przeciwnych frakcji by się przez nią komunikowały, pozycje (x,y) jednostkach w regionach, wykrywanie **DR** okrężne.
+	
+| . | . | . | . | . | . | . | . | . | . |
+|--|--|--|--|--|--|--|--|--|--|
+| . | . | . | . | . | . | . | . | . | . |
+| . | . | > | . | . | < | . | . | . | . |
+| . | > | . | . | < | . | . | [ | ] | . |
+| . | . | . | / | \ | . | . | . | . | . |
+| . | . | . | \ | / | . | . | . | . | . |
+| . | . | . | . | . | . | . | . | . | . |
+
+
 - Kontrola: stop/play, kontrola prędkości, przyzywanie jednostek  
 ### Kolejki i Pamięć dzielona
 Do popracowania z tym ale może byłoby możliwe utworzenie osobnych kolejek na frakcję co zsynchronizowało by jednostki pomiędzy frakcjami dzięki czemu wprowadzona by została lekka losowość np. który ze statków dokona decydującego strzału. Jednostki w tej samej frakcji były by zsynchronizowane.
@@ -148,6 +159,7 @@ Do popracowania z tym ale może byłoby możliwe utworzenie osobnych kolejek na 
 - Synchronizacja i de synchronizacja
 - Carrier vs Destroyer
 - No conflict simulation
+
 
 
 

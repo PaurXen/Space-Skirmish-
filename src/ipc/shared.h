@@ -6,7 +6,7 @@
 
 #define N 40
 #define M 80
-#define MAX_UNIRS 64
+#define MAX_UNITS 64
 
 // unit_id strored in grid (0 = empty)
 typedef int16_t unit_id_t;
@@ -30,8 +30,13 @@ typedef struct {
     uint16_t next_unit_id;  // allocates IDs (starts at 1)
     uint16_t unit_count;    // active entitys
 
+    // tick barrier data
+    uint16_t tick_expected; // units step per tick
+    uint16_t tick_done;     // units finished tick
+    uint32_t last_step_tick[MAX_UNITS+1];   // tick per unit
+
     unit_id_t grid[N][M];   // stored unit_id only!
-    unit_entity_t units[MAX_UNIRS+1];   //index by unit_id, [0] unused
+    unit_entity_t units[MAX_UNITS+1];   //index by unit_id, [0] unused
 }shm_state_t;
 
 #define SHM_MAGIC 0x53504143u   // 'SPAC'
@@ -39,7 +44,8 @@ typedef struct {
 // Semaphores
 enum {
     SEM_GLOBAL_LOCK = 0,    // protects shm_state_t (grid+units+ticks)
-    SEM_TICK,               // tick_barrier (TBI)
+    SEM_TICK_START,         // CC posts N permits per tick
+    SEM_TICK_DONE,          // unit post done; CC waits N times
     SEM_COUNT
 };
 

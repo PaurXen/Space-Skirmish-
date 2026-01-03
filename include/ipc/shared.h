@@ -1,5 +1,7 @@
-#ifndef SHARED_H
-#define SHEARD_H
+#ifndef IPC_SHARED_H
+#define IPC_SHARED_H
+
+    
 
 #include <stdint.h>
 #include <sys/types.h>

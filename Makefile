@@ -1,0 +1,22 @@
+CC=gcc
+CFLAGS=-O2 -Wall -Wextra -std=c11 -Iinclude
+
+IPC_SRCS=src/ipc/semaphores.c src/ipc/ipc_context.c
+IPC_OBJS=$(IPC_SRCS:.c=.o)
+
+all: command_center battleship
+
+command_center: src/command_center.o src/ipc/semaphores.o src/ipc/ipc_context.o src/utils.o
+	$(CC) $(CFLAGS) -o command_center $^
+
+battleship: src/battleship.o src/ipc/semaphores.o src/ipc/ipc_context.o src/utils.o
+	$(CC) $(CFLAGS) -o battleship $^
+
+src/%.o: src/%.c
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+src/ipc/%.o: src/ipc/%.c
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+clean:
+	rm -f command_center battleship src/*.o src/ipc/*.o

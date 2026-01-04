@@ -6,11 +6,11 @@ IPC_OBJS=$(IPC_SRCS:.c=.o)
 
 all: command_center battleship
 
-command_center: src/command_center.o $(IPC_OBJS)
-	$(CC) $(CFLAGS) -o $@ $^
+command_center: src/command_center.o src/ipc/semaphores.o src/ipc/ipc_context.o src/utils.o
+	$(CC) $(CFLAGS) -o command_center $^
 
-battleship: src/battleship.o $(IPC_OBJS)
-	$(CC) $(CFLAGS) -o $@ $^
+battleship: src/battleship.o src/ipc/semaphores.o src/ipc/ipc_context.o src/utils.o
+	$(CC) $(CFLAGS) -o battleship $^
 
 src/%.o: src/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<

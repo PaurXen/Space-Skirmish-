@@ -11,12 +11,36 @@
 #include <sys/shm.h>
 #include <sys/sem.h>
 
+/*
+ * IPC helper: create/attach/destroy SysV shared memory + semaphore set
+ *
+ * Overview:
+ *  - ipc_create(): create (or open) and initialize a fresh shared-state run.
+ *    Creates the ftok file if missing, obtains keys via ftok, creates semaphores
+ *    and shared memory, attaches, and resets shared state under SEM_GLOBAL_LOCK.
+ *
+ *  - ipc_attach(): attach to existing objects created by ipc_create. Performs
+ *    basic sanity checking (magic) and returns -1 with errno set on failure.
+ *
+ *  - ipc_detach(): detach the shared memory mapping for this process.
+ *
+ *  - ipc_destroy(): remove the SysV objects (shmctl IPC_RMID, semctl IPC_RMID).
+ *
+ * Notes / Conventions:
+ *  - All functions return 0 on success, -1 on failure and set errno like syscalls.
+ *  - Caller is responsible for calling ipc_destroy only if it is the owner/CC.
+ *  - Shared state is protected by SEM_GLOBAL_LOCK where required; ipc_create
+ *    resets the shared memory contents under that lock so a fresh run starts
+ *    with predictable values.
+ *  - ftok project ids are single characters: 'S' for shared memory, 'M' for semaphores.
+ */
 
 static key_t make_key(const char *path, int proj_id) {
     key_t k = ftok(path, proj_id);
     return k;   // caller checks -1
 }
 
+/* Ensure the ftok key file exists (create if needed). Returns 0 on success. */
 static int esure_ftok_file(const char *path) {
     FILE *f = fopen(path, "a");
     if (!f) return -1;
@@ -24,8 +48,13 @@ static int esure_ftok_file(const char *path) {
     return 0;
 }
 
+/* Initialize shm contents if they are not already valid.
+ * This is called by the creator after attaching; it acquires SEM_GLOBAL_LOCK
+ * to perform a safe reset. On first-run we set magic, next_unit_id and zero
+ * sensible counters. Returns 0 on success, -1 on error (errno set).
+ */
 static int init_if_needed(ipc_ctx_t *ctx) {
-    // called by craetor after attach: initialize SHM
+    /* acquire global lock to safely inspect/modify shared state */
     if (sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK) == -1) return -1;
 
     if (ctx->S->magic != SHM_MAGIC) {
@@ -40,6 +69,12 @@ static int init_if_needed(ipc_ctx_t *ctx) {
     return 0;
 }
 
+/* ipc_create
+ *  - Prepare ctx and create/reset IPC objects for a fresh run.
+ *  - Ensures the ftok file exists, obtains keys, creates semaphores and SHM.
+ *  - Resets semaphore values (SETALL) and clears the shared segment under lock.
+ *  - On success ctx is initialized, ctx->S attached and ready.
+ */
 int ipc_create(ipc_ctx_t *ctx, const char *ftok_path) {
     memset(ctx, 0, sizeof(*ctx));
     ctx->shm_id = -1;
@@ -83,8 +118,11 @@ int ipc_create(ipc_ctx_t *ctx, const char *ftok_path) {
     return 0;
 }
 
-
-
+/* ipc_attach
+ *  - Attach to existing IPC objects using ftok-derived keys.
+ *  - Does not modify shared memory; verifies magic and returns -1 with errno
+ *    set if the segment is not initialized correctly.
+ */
 int ipc_attach(ipc_ctx_t *ctx, const char *ftok_path) {
     memset(ctx, 0, sizeof(*ctx));
     ctx->shm_id = -1;
@@ -107,7 +145,7 @@ int ipc_attach(ipc_ctx_t *ctx, const char *ftok_path) {
     ctx->sem_id = semget(sem_key, SEM_COUNT, 0600);
     if (ctx->sem_id == -1) return -1;
 
-    // sanity check
+    // sanity check: ensure the creator initialized the segment
     if (ctx->S->magic != SHM_MAGIC) {
         errno = EPROTO;
         return -1;
@@ -116,6 +154,10 @@ int ipc_attach(ipc_ctx_t *ctx, const char *ftok_path) {
     return 0;
 }
 
+/* ipc_detach
+ *  - Detach the shared memory mapping for this process.
+ *  - Returns 0 on success, -1 on failure (errno set by shmdt).
+ */
 int ipc_detach(ipc_ctx_t *ctx) {
     int ok = 0;
     if (ctx->S && ctx->S != (void*)-1) {
@@ -125,8 +167,12 @@ int ipc_detach(ipc_ctx_t *ctx) {
     return ok;
 }
 
+/* ipc_destroy
+ *  - Remove the SysV shared memory and semaphore objects (IPC_RMID).
+ *  - Intended to be called by the owner (Command Center) during cleanup.
+ *  - Returns 0 on success, -1 if any removal failed.
+ */
 int ipc_destroy(ipc_ctx_t* ctx) {
-    // remove objects (CC only)
     int ok =0;
 
     if (ctx->shm_id != -1) {

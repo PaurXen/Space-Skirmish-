@@ -1,53 +1,62 @@
 #ifndef IPC_SHARED_H
 #define IPC_SHARED_H
 
-    
-
 #include <stdint.h>
 #include <sys/types.h>
 
+/* Grid dimensions */
 #define N 40
 #define M 80
 #define MAX_UNITS 64
 
-// unit_id strored in grid (0 = empty)
+/* unit_id stored in grid (0 = empty) */
 typedef int16_t unit_id_t;
 
-typedef enum { FACTION_REPUBLIC=1, FACTION_CIS=2} faction_t;
-typedef enum { TYPE_FLAGSHIP=1, TYPE_DESTROYER=2, TYPE_CARRIER=3, TYPE_FIGTER=4, TYPE_BOMBER=5, TYPE_ELITE=6} unit_type_t;
+/* Simple enums stored as small integers in shared memory */
+typedef enum { FACTION_REPUBLIC=1, FACTION_CIS=2 } faction_t;
+typedef enum { TYPE_FLAGSHIP=1, TYPE_DESTROYER=2, TYPE_CARRIER=3, TYPE_FIGTER=4, TYPE_BOMBER=5, TYPE_ELITE=6 } unit_type_t;
 
+/* Per-unit record stored in shared memory.
+ * All fields are simple POD types so the struct can be used in SysV SHM.
+ */
 typedef struct {
-    pid_t pid;              // mapping unit_id -> pid
-    uint8_t faction;        // faction_t
-    uint8_t type;           // unit_type_t
-    uint8_t alive;          // 1/0
-    uint16_t x,y;           // position on grid
-    uint32_t flags;         // future: status,orders,etc.
-    
-}unit_entity_t;
+    pid_t pid;              /* process id for this unit (for signaling) */
+    uint8_t faction;        /* faction_t */
+    uint8_t type;           /* unit_type_t */
+    uint8_t alive;          /* 1 == alive, 0 == dead */
+    uint16_t x, y;          /* position on grid (N x M) */
+    uint32_t flags;         /* reserved for status / orders */
+} unit_entity_t;
 
+/* Global shared state placed in SysV shared memory segment.
+ * Indexing: units[0] is unused; valid unit IDs range 1..MAX_UNITS.
+ */
 typedef struct {
-    uint32_t magic;         // for sanity checking
-    uint32_t ticks;         // global tick_counter
-    uint16_t next_unit_id;  // allocates IDs (starts at 1)
-    uint16_t unit_count;    // active entitys
+    uint32_t magic;         /* magic for sanity checking */
+    uint32_t ticks;         /* global tick counter incremented by CC */
+    uint16_t next_unit_id;  /* allocator for new unit IDs (starts at 1) */
+    uint16_t unit_count;    /* number of active units */
 
-    // tick barrier data
-    uint16_t tick_expected; // units step per tick
-    uint16_t tick_done;     // units finished tick
-    uint32_t last_step_tick[MAX_UNITS+1];   // tick per unit
+    /* Tick barrier synchronization bookkeeping */
+    uint16_t tick_expected; /* how many units are expected this tick */
+    uint16_t tick_done;     /* how many units have finished this tick */
+    uint32_t last_step_tick[MAX_UNITS+1]; /* per-unit last-tick performed */
 
-    unit_id_t grid[N][M];   // stored unit_id only!
-    unit_entity_t units[MAX_UNITS+1];   //index by unit_id, [0] unused
-}shm_state_t;
+    unit_id_t grid[N][M];   /* grid of unit IDs (0 == empty) */
+    unit_entity_t units[MAX_UNITS+1]; /* units indexed by unit_id (0 unused) */
+} shm_state_t;
 
-#define SHM_MAGIC 0x53504143u   // 'SPAC'
+#define SHM_MAGIC 0x53504143u   /* 'SPAC' */
 
-// Semaphores
+/* Semaphore indices within the semaphore set.
+ *  - SEM_GLOBAL_LOCK: mutex protecting the entire shm_state_t (grid + units + ticks).
+ *  - SEM_TICK_START: CC posts N permits (one per alive unit) to allow units to run a tick.
+ *  - SEM_TICK_DONE: each unit posts when finished; CC waits N times to collect them.
+ */
 enum {
-    SEM_GLOBAL_LOCK = 0,    // protects shm_state_t (grid+units+ticks)
-    SEM_TICK_START,         // CC posts N permits per tick
-    SEM_TICK_DONE,          // unit post done; CC waits N times
+    SEM_GLOBAL_LOCK = 0,
+    SEM_TICK_START,
+    SEM_TICK_DONE,
     SEM_COUNT
 };
 

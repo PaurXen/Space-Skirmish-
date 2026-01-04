@@ -9,6 +9,7 @@
 #include "ipc/ipc_context.h"
 #include "ipc/semaphores.h"
 #include "ipc/shared.h"
+#include "log.h"
 
 static volatile sig_atomic_t g_stop = 0;
 
@@ -57,13 +58,17 @@ int main(int argc, char **argv) {
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = on_signal;
     sigaction(SIGTERM, &sa, NULL);
-    sigaction(SIGINT, &sa, NULL);
+    signal(SIGINT, SIG_IGN);
+
 
     ipc_ctx_t ctx;
     if (ipc_attach(&ctx, ftok_path) == -1) {
         perror("ipc_attach");
         return 1;
     }
+
+    log_init("BS", unit_id);
+    atexit(log_close); 
 
     // ensure registry PID is correct (independent consistency)
     sem_lock(ctx.sem_id, SEM_GLOBAL_LOCK);
@@ -75,6 +80,7 @@ int main(int argc, char **argv) {
     ctx.S->units[unit_id].y = (int16_t)y;
     sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
 
+    LOGI("started faction=%d type=%d pos=(%d,%d)", faction, type, x, y);
     printf("[BS %u] pid=%d faction=%d type=%d pos=(%d,%d)\n",
            unit_id, (int)getpid(), faction, type, x, y);
 
@@ -94,6 +100,7 @@ int main(int argc, char **argv) {
 
             // TODO: real per-tick logic here (move/shoot/detect)
             if ((t % 25) == 0) {
+                LOGI("tick=%u step done (random order)", t);
                 printf("[BS %u] tick=%u step done (random order)\n", unit_id, t);
                 fflush(stdout);
             }
@@ -109,6 +116,7 @@ int main(int argc, char **argv) {
         }
     }
 
+    LOGW("terminating, cleaning registry/grid");
     printf("[BS %u] terminating, cleaning registry/grid\n", unit_id);
     mark_dead(&ctx, unit_id);
 

@@ -1,0 +1,22 @@
+# ===== Logs =====
+logs/
+
+# ===== Build artifacts =====
+*.o
+command_center
+battleship
+
+# ===== IPC / runtime files =====
+ipc.key
+
+# ===== Editor / OS junk =====
+*.swp
+*.swo
+*.tmp
+*~
+.DS_Store
+Thumbs.db
+
+# ===== Build directories =====
+build/
+cmake-build-*/

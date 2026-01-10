@@ -38,6 +38,8 @@ int sem_op_intr(int semid, struct sembuf *ops, size_t nops, volatile sig_atomic_
  *  - Return 0 on success, -1 on error.
  */
 int sem_lock(int semid, unsigned short semnum);
+int sem_lock_intr(int semid, unsigned short semnum, volatile sig_atomic_t *stop_flag);
+
 int sem_unlock(int semid, unsigned short semnum);
 
 /* sem_wait_intr

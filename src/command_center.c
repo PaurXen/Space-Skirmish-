@@ -32,6 +32,7 @@ static volatile sig_atomic_t g_stop = 0;
 /* Signal handler: set cooperative stop flag */
 static void on_signal(int sig) {
     (void)sig;
+    LOGD("g_stop flag raised. (g_stop = 1)");
     g_stop = 1;
 }
 
@@ -61,16 +62,24 @@ static uint16_t alloc_unit_id(ipc_ctx_t *ctx) {
     uint16_t id = 0;
 
     sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK);
-    if (ctx->S->next_unit_id > MAX_UNITS) {
-        sem_unlock(ctx->sem_id, SEM_GLOBAL_LOCK);
-        fprintf(stderr, "No more unit IDs available (MAX_UNITS=%d)\n", MAX_UNITS);
-        return 0;
-    }
-    id = ctx->S->next_unit_id++;
-    sem_unlock(ctx->sem_id, SEM_GLOBAL_LOCK);
 
-    return id;
+    for (uint16_t i = 1; i <= MAX_UNITS; i++) {
+        if (ctx->S->units[i].alive == 0 &&
+            ctx->S->units[i].pid == 0) {
+            ctx->S->units[i].alive = -1;
+            id = i;
+            break;
+        }
+    }
+
+    sem_unlock(ctx->sem_id, SEM_GLOBAL_LOCK);
+    if (id == 0){
+        LOGD("No more unit IDs available (MAX_UNITS=%d)", MAX_UNITS);
+        fprintf(stderr, "[CC] No more unit IDs available (MAX_UNITS=%d)\n", MAX_UNITS);
+    }
+    return id;   // 0 means "no free slot"
 }
+
 
 /* Register a unit in shared memory:
  *  - sets PID, faction, type, alive flag and position
@@ -86,15 +95,18 @@ static void register_unit(ipc_ctx_t *ctx, uint16_t unit_id, pid_t pid,
     ctx->S->units[unit_id].faction = (uint8_t)faction;
     ctx->S->units[unit_id].type = (uint8_t)type;
     ctx->S->units[unit_id].alive = 1;
-    ctx->S->units[unit_id].x = (uint16_t)x;
-    ctx->S->units[unit_id].y = (uint16_t)y;
+    ctx->S->units[unit_id].position.x = (uint16_t)x;
+    ctx->S->units[unit_id].position.y = (uint16_t)y;
 
     if (x>=0 && x<N && y>=0 && y<M) {
         if (ctx->S->grid[x][y] == 0)
             ctx->S->grid[x][y] = (unit_id_t)unit_id;
-        else
-            fprintf(stderr, "Warning: grid[%d][%d] occupied by unit_id=%d\n",
+        else {
+            LOGD("Warning: grid[%d][%d] occupied by unit_id=%d",
                     x, y, (int)ctx->S->grid[x][y]);
+            fprintf(stderr, "[CC] Warning: grid[%d][%d] occupied by unit_id=%d\n",
+                    x, y, (int)ctx->S->grid[x][y]);
+            }
     }
 
     ctx->S->unit_count++;
@@ -132,13 +144,59 @@ static pid_t spawn_battleship(ipc_ctx_t *ctx, const char *exe_path,
               "--type", types_s,
               "--x", x_s,
               "--y", y_s,
-              NULL);
+            NULL);
         _exit(1);
     }
-
     register_unit(ctx, unit_id, pid, faction, type, x, y);
+    LOGD("battleship pid=%d id=%d spawned", unit_id, pid);
     return pid;
 }
+
+static void cleanup_dead_units(ipc_ctx_t *ctx) {
+    sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK);
+
+    for (uint16_t id = 1; id <= MAX_UNITS; id++) {
+        if (ctx->S->units[id].alive == 0 &&
+            ctx->S->units[id].pid > 0) {
+
+            pid_t pid = ctx->S->units[id].pid;
+
+            printf("[CC] unit %u marked dead, terminating pid %d\n", id, pid);
+            fflush(stdout);
+
+            kill(pid, SIGTERM);
+
+            // mark slot reusable
+            ctx->S->units[id].pid = 0;
+            ctx->S->units[id].type = 0;
+            ctx->S->units[id].faction = 0;
+            ctx->S->units[id].position.x = -1;
+            ctx->S->units[id].position.y = -1;
+            ctx->S->units[id].flags = -1;
+        }
+    }
+
+    sem_unlock(ctx->sem_id, SEM_GLOBAL_LOCK);
+
+    // reap zombies (non-blocking)
+    while (waitpid(-1, NULL, WNOHANG) > 0) {}
+}
+
+static void process_dmg_payload(ipc_ctx_t *ctx) {
+    sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK);
+    for (uint16_t id = 1; id <= MAX_UNITS; id++) {
+        if (ctx->S->units[id].alive == 1
+            && ctx->S->units[id].pid > 0
+            && ctx->S->units[id].dmg_payload != 0) {
+            
+                pid_t pid = ctx->S->units[id].pid;
+
+                kill(pid, SIGRTMAX);
+        }
+    }
+    sem_unlock(ctx->sem_id,SEM_GLOBAL_LOCK);
+}
+
 
 /* Start a small 'tee' process that mirrors the program's stdout/stderr into a file:
  *  - creates a pipe, forks a child that reads from pipe and writes to both
@@ -257,8 +315,9 @@ int main(int argc, char **argv) {
     spawn_battleship(&ctx, battleship, u3, FACTION_CIS,      TYPE_DESTROYER, 30, 60, ftok_path);
     spawn_battleship(&ctx, battleship, u4, FACTION_CIS,      TYPE_CARRIER,   32, 62, ftok_path);
 
-    LOGI("[CC] shm_id=%d sem_id=%d spawned 4 battleships. Ctrl+C to stop.\n",ctx.shm_id, ctx.sem_id);
+    LOGI("[CC] shm_id=%d sem_id=%d spawned 4 battleships. Ctrl+C to stop.",ctx.shm_id, ctx.sem_id);
     printf("[CC] shm_id=%d sem_id=%d spawned 4 battleships. Ctrl+C to stop.\n",ctx.shm_id, ctx.sem_id);
+
 
     /* Main tick loop:
      *  - sleep for tick interval
@@ -269,8 +328,7 @@ int main(int argc, char **argv) {
      */
     while (!g_stop) {
         usleep(tick_us);
-
-        sem_lock(ctx.sem_id, SEM_GLOBAL_LOCK);
+                if (sem_lock_intr(ctx.sem_id, SEM_GLOBAL_LOCK, &g_stop) == -1) break;
         ctx.S->ticks++;
         uint32_t t =ctx.S->ticks;
 
@@ -281,8 +339,7 @@ int main(int argc, char **argv) {
         ctx.S->tick_done = 0;
 
         sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
-
-        /* release exactly one start permit per alive unit */
+                /* release exactly one start permit per alive unit */
         for (unsigned i=0; i<alive; i++) {
             if (sem_post_retry(ctx.sem_id, SEM_TICK_START, +1) == -1) {
                 perror("sem_post_retry(TICK_START)");
@@ -290,17 +347,23 @@ int main(int argc, char **argv) {
                 break;
             }
         }
-
-        /* wait for all alive units to report done (cooperative interrupt via g_stop) */
+                /* wait for all alive units to report done (cooperative interrupt via g_stop) */
         for (unsigned i=0; i<alive; i++) {
             if (sem_wait_intr(ctx.sem_id, SEM_TICK_DONE, -1, &g_stop) == -1) {
                 break; // Ctrl+C or error
             }
         }
-
-        if ((t % 10) == 0) {
+                process_dmg_payload(&ctx);
+        cleanup_dead_units(&ctx);
+        
+        if ((t % 25) == 0) {
             LOGI("ticks=%u alive_units=%u", t, alive);
             printf("[CC] ticks=%u alive_units=%u\n", t, alive);
+            fflush(stdout);
+            printf("[ ");
+            for (int id=1; id<=MAX_UNITS; id++) {
+                printf("%d, ", ctx.S->units[id].pid);
+            } printf(" ]");
             fflush(stdout);
         }
     }
@@ -315,7 +378,7 @@ int main(int argc, char **argv) {
 
     sem_lock(ctx.sem_id, SEM_GLOBAL_LOCK);
     for (int id=1; id<=MAX_UNITS; id++) {
-        if (ctx.S->units[id].alive && ctx.S->units[id].pid > 1) {
+        if (ctx.S->units[id].pid > 1) {
             kill(ctx.S->units[id].pid, SIGTERM);
         }
     }

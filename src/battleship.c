@@ -5,16 +5,22 @@
 #include <string.h>
 #include <signal.h>
 #include <unistd.h>
+#include <time.h>
 
 #include "ipc/ipc_context.h"
 #include "ipc/semaphores.h"
 #include "ipc/shared.h"
+
+#include "unit_stats.h"
+#include "unit_logic.h"
+#include "unit_ipc.h"
 #include "log.h"
 
 static volatile sig_atomic_t g_stop = 0;
 
 static void on_signal(int sig) {
     (void)sig;
+    LOGD("g_stop flag raised. (g_stop = 1)");
     g_stop = 1;
 }
 
@@ -24,8 +30,9 @@ static void mark_dead(ipc_ctx_t *ctx, uint16_t unit_id) {
     if (unit_id <= MAX_UNITS) {
         ctx->S->units[unit_id].alive = 0;
 
-        int x = ctx->S->units[unit_id].x;
-        int y = ctx->S->units[unit_id].y;
+        int x = (int)ctx->S->units[unit_id].position.x;
+        int y = (int)ctx->S->units[unit_id].position.y;
+
         if (x >= 0 && x < N && y >= 0 && y < M) {
             if (ctx->S->grid[x][y] == (unit_id_t)unit_id)
                 ctx->S->grid[x][y] = 0;
@@ -38,28 +45,40 @@ static void mark_dead(ipc_ctx_t *ctx, uint16_t unit_id) {
 int main(int argc, char **argv) {
     const char *ftok_path = "./ipc.key";
     uint16_t unit_id = 0;
-    int faction = 0, type = 0, x = -1, y = -1;
+    int faction = 0, type_i = 0, x = -1, y = -1;
 
-    for (int i=1; i<argc; i++) {
-        if (!strcmp(argv[i], "--ftok") && i+1<argc) ftok_path = argv[++i];
-        else if (!strcmp(argv[i], "--unit") && i+1<argc) unit_id = (uint16_t)atoi(argv[++i]);
-        else if (!strcmp(argv[i], "--faction") && i+1<argc) faction = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "--type") && i+1<argc) type = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "--x") && i+1<argc) x = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "--y") && i+1<argc) y = atoi(argv[++i]);
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--ftok") && i + 1 < argc) ftok_path = argv[++i];
+        else if (!strcmp(argv[i], "--unit") && i + 1 < argc) unit_id = (uint16_t)atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--faction") && i + 1 < argc) faction = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--type") && i + 1 < argc) type_i = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--x") && i + 1 < argc) x = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--y") && i + 1 < argc) y = atoi(argv[++i]);
     }
 
     if (unit_id == 0 || unit_id > MAX_UNITS) {
+        LOGE("[BS] invalid unit_id");
         fprintf(stderr, "[BS] invalid unit_id\n");
         return 1;
     }
 
+    // signals
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = on_signal;
     sigaction(SIGTERM, &sa, NULL);
+    // units ignore SIGINT; only CC handles Ctrl+C and sends SIGTERM
     signal(SIGINT, SIG_IGN);
 
+
+    //tbi
+    // struct sigaction sa2;
+    // memset(&sa2, 0, sizeof(sa2));
+    // sa2.sa_handler = NULL;
+    // sigaction(SIGRTMAX, &sa2, NULL);
+
+    // RNG per process
+    srand((unsigned)(time(NULL) ^ (getpid() << 16)));
 
     ipc_ctx_t ctx;
     if (ipc_attach(&ctx, ftok_path) == -1) {
@@ -67,59 +86,119 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    log_init("BS", unit_id);
-    atexit(log_close); 
-
-    // ensure registry PID is correct (independent consistency)
+    // ensure registry entry is correct
     sem_lock(ctx.sem_id, SEM_GLOBAL_LOCK);
     ctx.S->units[unit_id].pid = getpid();
     ctx.S->units[unit_id].faction = (uint8_t)faction;
-    ctx.S->units[unit_id].type = (uint8_t)type;
+    ctx.S->units[unit_id].type = (uint8_t)type_i;
     ctx.S->units[unit_id].alive = 1;
-    ctx.S->units[unit_id].x = (int16_t)x;
-    ctx.S->units[unit_id].y = (int16_t)y;
+    ctx.S->units[unit_id].position.x = (int16_t)x;
+    ctx.S->units[unit_id].position.y = (int16_t)y;
+    ctx.S->units[unit_id].dmg_payload = 0;
     sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
 
-    LOGI("started faction=%d type=%d pos=(%d,%d)", faction, type, x, y);
-    printf("[BS %u] pid=%d faction=%d type=%d pos=(%d,%d)\n",
-           unit_id, (int)getpid(), faction, type, x, y);
+    log_init("BS", unit_id);
+    atexit(log_close);
+
+    unit_type_t type = (unit_type_t)type_i;
+    unit_stats_t st = unit_stats_for_type(type);
+
+    LOGI("pid=%d faction=%d type=%d pos=(%d,%d) SP=%d DR=%d",
+           (int)getpid(), faction, type_i, x, y, st.sp, st.dr);
+    printf("[BS %u] pid=%d faction=%d type=%d pos=(%d,%d) SP=%d DR=%d\n",
+           unit_id, (int)getpid(), faction, type_i, x, y, st.sp, st.dr);
+    fflush(stdout);
+
+    // patrol memory (local state)
+    int have_target = 0;
+    point_t primary_target;
+    point_t secondary_target;
 
     while (!g_stop) {
-        // wait for CC permit (interruptible)
+        // wait for tick start
         if (sem_wait_intr(ctx.sem_id, SEM_TICK_START, -1, &g_stop) == -1) {
             if (g_stop) break;
             continue;
         }
+        if (sem_lock_intr(ctx.sem_id, SEM_GLOBAL_LOCK, &g_stop) == -1) {
+        break;
+}
 
-        sem_lock(ctx.sem_id, SEM_GLOBAL_LOCK);
-        uint32_t t = ctx.S->ticks;
+        uint32_t t;
+        int alive;
+        point_t cp;
 
-        // ensure max 1 action per tick
-        if (ctx.S->last_step_tick[unit_id] != t) {
-            ctx.S->last_step_tick[unit_id] = t;
+        // take a snapshot for this tick (minimal time under lock)
+        t = ctx.S->ticks;
+        alive = ctx.S->units[unit_id].alive;
+        cp = (point_t)ctx.S->units[unit_id].position;
 
-            // TODO: real per-tick logic here (move/shoot/detect)
-            if ((t % 25) == 0) {
-                LOGI("tick=%u step done (random order)", t);
-                printf("[BS %u] tick=%u step done (random order)\n", unit_id, t);
-                fflush(stdout);
-            }
+        if (alive == 0) {
+            sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
+            (void)sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1);
+            break;
         }
 
-        if (ctx.S->tick_done < 65535) ctx.S->tick_done++;
+        if (st.hp <= 0) {
+            mark_dead(&ctx, unit_id);
+            sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
+            (void)sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1);
+            break;
+        }
+
+        // ensure at most one action per tick
+        if (ctx.S->last_step_tick[unit_id] == t) {
+            sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
+            (void)sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1);
+            continue;
+        }
+        ctx.S->last_step_tick[unit_id] = t;
         sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
 
-        // notify CC: done
+        if (!alive) {
+            (void)sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1);
+            break;
+        }
+
+        // choose new target if none or already reached
+        if (!have_target || (cp.x == primary_target.x && cp.y == primary_target.y)) {
+            unit_pick_patrol_target_local(cp, st.dr, M, N,  &primary_target);
+            have_target = 1;
+        }
+
+        // move toward target (updates SHM grid + pos)
+        unit_move_to(&ctx, unit_id, primary_target);
+
+        // read new position for printing
+        if (sem_lock_intr(ctx.sem_id, SEM_GLOBAL_LOCK, &g_stop) == -1) {
+        break;
+}
+        int nx = (int)ctx.S->units[unit_id].position.x;
+        int ny = (int)ctx.S->units[unit_id].position.y;
+        sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
+
+        // debug print sometimes
+        if ((t % 10) == 0) {
+            LOGI("tick=%u pos=(%d,%d) target=(%d,%d)",
+                   unit_id, t, nx, ny, primary_target.x, primary_target.y);
+            printf("[BS %u] tick=%u pos=(%d,%d) target=(%d,%d)\n",
+                   unit_id, t, nx, ny, primary_target.x, primary_target.y);
+            fflush(stdout);
+        }
+
+        // notify CC done
         if (sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1) == -1) {
+            LOGE("sem_post_retry(TICK_DONE)");
             perror("sem_post_retry(TICK_DONE)");
             break;
         }
     }
 
-    LOGW("terminating, cleaning registry/grid");
+    LOGW("[BS %u] terminating, cleaning registry/grid", unit_id);
     printf("[BS %u] terminating, cleaning registry/grid\n", unit_id);
-    mark_dead(&ctx, unit_id);
+    fflush(stdout);
 
+    mark_dead(&ctx, unit_id);
     ipc_detach(&ctx);
     return 0;
 }

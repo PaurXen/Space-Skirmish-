@@ -26,7 +26,7 @@ static FILE *g_logf = NULL;
 /* global combined log (fd opened with O_APPEND for atomic line appends) */
 static int g_all_fd = -1;
 
-static log_level_t g_min_lvl = LOG_LVL_INFO;
+static log_level_t g_min_lvl = LOG_LVL_DEBUG;
 static char g_role[8] = "??";
 static uint16_t g_unit_id = 0;
 

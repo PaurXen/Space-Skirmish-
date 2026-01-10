@@ -5,16 +5,23 @@
 #include <sys/types.h>
 
 /* Grid dimensions */
-#define N 40
 #define M 80
+#define N 40
 #define MAX_UNITS 64
 
 /* unit_id stored in grid (0 = empty) */
 typedef int16_t unit_id_t;
 
 /* Simple enums stored as small integers in shared memory */
+typedef enum { NONE = 0, LR_CANNON = 1, MR_CANNON = 2, SR_CANNON = 3, LR_GUN = 4, MR_GUN = 5, SR_GUN = 6 } weapon_type_t;
+typedef enum { PATROL = 0, ATTACK = 1, MOVE = 2, MOVE_ATTACK = 3, GUARD = 4 } unit_order_t;
 typedef enum { FACTION_REPUBLIC=1, FACTION_CIS=2 } faction_t;
 typedef enum { TYPE_FLAGSHIP=1, TYPE_DESTROYER=2, TYPE_CARRIER=3, TYPE_FIGTER=4, TYPE_BOMBER=5, TYPE_ELITE=6 } unit_type_t;
+
+typedef struct {
+    int16_t x;
+    int16_t y;
+} point_t;
 
 /* Per-unit record stored in shared memory.
  * All fields are simple POD types so the struct can be used in SysV SHM.
@@ -24,9 +31,32 @@ typedef struct {
     uint8_t faction;        /* faction_t */
     uint8_t type;           /* unit_type_t */
     uint8_t alive;          /* 1 == alive, 0 == dead */
-    uint16_t x, y;          /* position on grid (N x M) */
+    point_t position;       /* position on grid (N x M) */
     uint32_t flags;         /* reserved for status / orders */
+    int32_t dmg_payload;
 } unit_entity_t;
+
+typedef struct {
+    int16_t dmg;
+    int16_t range;
+    weapon_type_t type;
+}weapon_stats_t;
+
+typedef struct {
+    const weapon_type_t *arr;
+    uint8_t count;
+} weapon_loadout_view_t;
+
+typedef struct {
+    int16_t hp;     // hit points 
+    int16_t sh;     // shields (TBI)
+    int16_t en;     // energy (TBI)
+    int16_t sp;     // speed: radus of movment
+    int16_t si;     // unit size (TBI)
+    int16_t dr;     // detection radius: tiles
+    weapon_loadout_view_t ba;  // list of batteries
+} unit_stats_t;
+
 
 /* Global shared state placed in SysV shared memory segment.
  * Indexing: units[0] is unused; valid unit IDs range 1..MAX_UNITS.
@@ -45,6 +75,7 @@ typedef struct {
     unit_id_t grid[N][M];   /* grid of unit IDs (0 == empty) */
     unit_entity_t units[MAX_UNITS+1]; /* units indexed by unit_id (0 unused) */
 } shm_state_t;
+
 
 #define SHM_MAGIC 0x53504143u   /* 'SPAC' */
 

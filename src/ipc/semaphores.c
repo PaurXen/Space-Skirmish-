@@ -62,6 +62,12 @@ int sem_lock(int semid, unsigned short semnum) {
     return sem_op_retry(semid, &op, 1);
 }
 
+int sem_lock_intr(int semid, unsigned short semnum, volatile sig_atomic_t *stop_flag) {
+    struct sembuf op = {.sem_num=semnum, .sem_op=-1, .sem_flg=0};
+    return sem_op_intr(semid, &op, 1, stop_flag);
+}
+
+
 int sem_unlock(int semid , unsigned short semnum) {
     struct sembuf op = {.sem_num=semnum, .sem_op=+1, .sem_flg=0};
     return sem_op_retry(semid, &op, 1);

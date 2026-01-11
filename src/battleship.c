@@ -24,6 +24,8 @@ static void on_signal(int sig) {
     g_stop = 1;
 }
 
+
+
 static void mark_dead(ipc_ctx_t *ctx, uint16_t unit_id) {
     sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK);
 
@@ -43,6 +45,7 @@ static void mark_dead(ipc_ctx_t *ctx, uint16_t unit_id) {
 }
 
 int main(int argc, char **argv) {
+    setpgid(getpid(), 0);
     const char *ftok_path = "./ipc.key";
     uint16_t unit_id = 0;
     int faction = 0, type_i = 0, x = -1, y = -1;
@@ -114,16 +117,17 @@ int main(int argc, char **argv) {
     point_t primary_target;
     point_t secondary_target;
 
-    while (!g_stop) {
-        // wait for tick start
+        while (!g_stop) {
+                // wait for tick start
         if (sem_wait_intr(ctx.sem_id, SEM_TICK_START, -1, &g_stop) == -1) {
             if (g_stop) break;
             continue;
         }
-        if (sem_lock_intr(ctx.sem_id, SEM_GLOBAL_LOCK, &g_stop) == -1) {
-        break;
-}
-
+        
+                if (sem_lock_intr(ctx.sem_id, SEM_GLOBAL_LOCK, &g_stop) == -1) {
+                        break;
+        }
+        
         uint32_t t;
         int alive;
         point_t cp;
@@ -132,35 +136,35 @@ int main(int argc, char **argv) {
         t = ctx.S->ticks;
         alive = ctx.S->units[unit_id].alive;
         cp = (point_t)ctx.S->units[unit_id].position;
-
-        if (alive == 0) {
-            sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
-            (void)sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1);
-            break;
+                if (alive == 0) {
+                        sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
+                                    (void)sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1);
+                        break;
         }
-
-        if (st.hp <= 0) {
-            mark_dead(&ctx, unit_id);
-            sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
-            (void)sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1);
-            break;
+        
+                if (st.hp <= 0) {
+                        mark_dead(&ctx, unit_id);
+                        sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
+                                    (void)sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1);
+                        break;
         }
+        
 
         // ensure at most one action per tick
-        if (ctx.S->last_step_tick[unit_id] == t) {
+                if (ctx.S->last_step_tick[unit_id] == t) {
             sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
-            (void)sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1);
-            continue;
+                                    (void)sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1);
+                        continue;
         }
-        ctx.S->last_step_tick[unit_id] = t;
+                ctx.S->last_step_tick[unit_id] = t;
         sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
-
-        if (!alive) {
-            (void)sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1);
-            break;
+        
+                if (!alive) {
+                        (void)sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1);
+                        break;
         }
-
-        // choose new target if none or already reached
+        
+                // choose new target if none or already reached
         if (!have_target || (cp.x == primary_target.x && cp.y == primary_target.y)) {
             unit_pick_patrol_target_local(cp, st.dr, M, N,  &primary_target);
             have_target = 1;
@@ -168,15 +172,15 @@ int main(int argc, char **argv) {
 
         // move toward target (updates SHM grid + pos)
         unit_move_to(&ctx, unit_id, primary_target);
-
+        
+        
         // read new position for printing
-        if (sem_lock_intr(ctx.sem_id, SEM_GLOBAL_LOCK, &g_stop) == -1) {
+                if (sem_lock_intr(ctx.sem_id, SEM_GLOBAL_LOCK, &g_stop) == -1) {
         break;
-}
-        int nx = (int)ctx.S->units[unit_id].position.x;
+}               int nx = (int)ctx.S->units[unit_id].position.x;
         int ny = (int)ctx.S->units[unit_id].position.y;
         sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
-
+        
         // debug print sometimes
         if ((t % 10) == 0) {
             LOGI("tick=%u pos=(%d,%d) target=(%d,%d)",
@@ -186,13 +190,14 @@ int main(int argc, char **argv) {
             fflush(stdout);
         }
 
-        // notify CC done
+
+                // notify CC done
         if (sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1) == -1) {
             LOGE("sem_post_retry(TICK_DONE)");
             perror("sem_post_retry(TICK_DONE)");
             break;
         }
-    }
+            }
 
     LOGW("[BS %u] terminating, cleaning registry/grid", unit_id);
     printf("[BS %u] terminating, cleaning registry/grid\n", unit_id);

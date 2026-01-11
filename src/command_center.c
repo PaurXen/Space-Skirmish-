@@ -10,6 +10,7 @@
 #include <time.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <errno.h>
 
 #include "ipc/ipc_context.h"
 #include "ipc/semaphores.h"
@@ -34,6 +35,11 @@ static void on_signal(int sig) {
     (void)sig;
     LOGD("g_stop flag raised. (g_stop = 1)");
     g_stop = 1;
+}
+
+static void exit_handler(void) {
+    g_stop = 1;
+    printf("[CC] Exit handler called, setting g_stop=1\n");
 }
 
 /* Create a per-run directory name under ./logs with timestamp+pid and ensure it exists. */
@@ -232,8 +238,10 @@ static pid_t start_terminal_tee(const char *run_dir) {
     if (tee_pid == 0) {
         /* child: read from pipe and write to both terminal and file */
         close(pfd[1]); // close write end
-
+        signal(SIGINT, SIG_IGN);
+        signal(SIGTERM, SIG_IGN);
         char buf[4096];
+        
         for (;;) {
             ssize_t n = read(pfd[0], buf, sizeof(buf));
             if (n == 0) break;
@@ -263,6 +271,8 @@ static pid_t start_terminal_tee(const char *run_dir) {
 }
 
 int main(int argc, char **argv) {
+    // atexit(exit_handler);
+    setpgid(0, 0);
     const char *ftok_path = "./ipc.key";
     const char *battleship = "./battleship";
 
@@ -327,8 +337,20 @@ int main(int argc, char **argv) {
      *  - wait for SEM_TICK_DONE alive times (interruptible)
      */
     while (!g_stop) {
-        usleep(tick_us);
-                if (sem_lock_intr(ctx.sem_id, SEM_GLOBAL_LOCK, &g_stop) == -1) break;
+        /* Use select/poll with timeout instead of usleep to check g_stop more often */
+        struct timeval tv = {0, tick_us};
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        
+        /* This allows us to sleep but still be interruptible */
+        int ret = select(0, NULL, NULL, NULL, &tv);
+        if (ret == -1 && errno == EINTR) {
+            if (g_stop) break;
+        }
+        
+        if (g_stop) break;  // Check immediately after sleep
+
+        if (sem_lock_intr(ctx.sem_id, SEM_GLOBAL_LOCK, &g_stop) == -1) break;
         ctx.S->ticks++;
         uint32_t t =ctx.S->ticks;
 
@@ -375,17 +397,41 @@ int main(int argc, char **argv) {
      */
     LOGW("stopping: sending SIGTERM to alive units...");
     printf("[CC] stopping: sending SIGTERM to alive units...\n");
+    
 
-    sem_lock(ctx.sem_id, SEM_GLOBAL_LOCK);
-    for (int id=1; id<=MAX_UNITS; id++) {
-        if (ctx.S->units[id].pid > 1) {
-            kill(ctx.S->units[id].pid, SIGTERM);
+    /* Try to get lock with interruptible version */
+    if (sem_lock_intr(ctx.sem_id, SEM_GLOBAL_LOCK, &g_stop) == -1) {
+        /* Couldn't get lock, just send signals without it */
+        for (int id = 1; id <= MAX_UNITS; id++) {
+            pid_t pid = ctx.S->units[id].pid;
+            if (pid > 1) kill(pid, SIGTERM);
+        }
+    } else {
+        /* We got the lock */
+        for (int id = 1; id <= MAX_UNITS; id++) {
+            pid_t pid = ctx.S->units[id].pid;
+            if (pid > 1) kill(pid, SIGTERM);
+        }
+        sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
+    }
+
+    /* Non-blocking wait for children */
+    int status;
+    pid_t pid;
+    int waited = 0;
+    for (int i = 0; i < 10; i++) {  // Try 10 times
+        pid = waitpid(-1, &status, WNOHANG);
+        if (pid > 0) {
+            waited++;
+            printf("[CC] reaped child %d\n", pid);
+        } else if (pid == 0) {
+            usleep(100000);  // 100ms
+        } else {
+            break;
         }
     }
-    sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
 
-    /* reap children */
-    while (wait(NULL) > 0) {}
+    LOGD("[CC] reaped %d children\n", waited);
 
     /* cleanup IPC and exit */
     ipc_detach(&ctx);

@@ -14,17 +14,19 @@ int64_t demage_to_target(unit_entity_t *attacker, unit_entity_t *target, weapon_
 
 // Returns 1 on success, 0 if no point exists (e.g., radius < 0 or no in-bounds points).
 int radar_pick_random_point_in_circle(
-    int cx, int cy, int r,
+    int16_t cx, int16_t cy, int16_t r,
     int grid_w, int grid_h,
     point_t *out
 );
 
 // Returns 1 on success, 0 if no border point exists.
 int radar_pick_random_point_on_circle_border(
-    int cx, int cy, int r,
+    point_t pos, int16_t r,
     int grid_w, int grid_h,
     point_t *out
 );
+
+int in_disk_i(int x, int y, int cx, int cy, int r);
 
 /* -----------------------------
  * Movement + local pathfinding
@@ -37,10 +39,10 @@ int radar_pick_random_point_on_circle_border(
  * Coordinates are in [0..grid_w-1] x [0..grid_h-1].
  */
 
-// Chooses a patrol target within radius floor of `pos`.
+// Chooses a patrol target within radius dr of `pos`.
 int unit_pick_patrol_target_local(
     point_t pos,
-    int sp,
+    int16_t dr,
     int grid_w, int grid_h,
     point_t *out_target
 );
@@ -51,7 +53,7 @@ int unit_pick_patrol_target_local(
 int unit_compute_goal_for_tick(
     point_t from,
     point_t target,
-    int sp,
+    int16_t sp,
     int grid_w, int grid_h,
     point_t *out_goal
 );
@@ -69,10 +71,35 @@ int unit_compute_goal_for_tick(
 int unit_next_step_towards(
     point_t from,
     point_t target,
-    int sp,
+    int16_t sp,
     int approach,
-    const int16_t *grid,
-    int grid_w, int grid_h, int grid_stride,
+    int grid_w, int grid_h,
+    const unit_id_t grid[grid_w][grid_h],
     point_t *out_next
 );
 
+// Computes a "goal" point within detection/planning radius `dr`.
+// If `target` is within `dr`, the goal becomes the target (even if it's
+// outside `sp`). Otherwise, it picks a point on the `dr` circle-border
+// closest to the target direction.
+int unit_compute_goal_for_tick_dr(
+    point_t from,
+    point_t target,
+    int16_t dr,
+    int grid_w, int grid_h,
+    point_t *out_goal
+);
+
+// Like unit_next_step_towards(), but the high-level goal is selected within
+// `dr` (detection/planning range) and the per-tick move is selected within
+// `sp` (speed range).
+int unit_next_step_towards_dr(
+    point_t from,
+    point_t target,
+    int16_t sp,
+    int16_t dr,
+    int approach,
+    int grid_w, int grid_h,
+    const unit_id_t grid[grid_w][grid_h],
+    point_t *out_next
+);

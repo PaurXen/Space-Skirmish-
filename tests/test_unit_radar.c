@@ -113,7 +113,7 @@ static int build_circle_border_points_clamped(
 
     // Deduplicate AFTER clamping to grid
     // N and M are compile-time constants in your file.
-    unsigned char seen[N][M];
+    unsigned char seen[M][N];
     memset(seen, 0, sizeof(seen));
 
     int count = 0;

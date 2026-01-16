@@ -122,7 +122,7 @@ static int build_circle_border_offsets(int r, offset_t *out, int max_out) {
 }
 
 int radar_pick_random_point_in_circle(
-    int cx, int cy, int r,
+    int16_t cx, int16_t cy, int16_t r,
     int grid_w, int grid_h,
     point_t *out
 ) {
@@ -161,7 +161,7 @@ int radar_pick_random_point_in_circle(
 }
 
 int radar_pick_random_point_on_circle_border(
-    int cx, int cy, int r,
+    point_t pos, int16_t r,
     int grid_w, int grid_h,
     point_t *out
 ) {
@@ -190,8 +190,8 @@ int radar_pick_random_point_on_circle_border(
 
     int n = 0;
     for (int i = 0; i < n_off; i++) {
-        int x = cx + offs[i].dx;
-        int y = cy + offs[i].dy;
+        int x = pos.x + offs[i].dx;
+        int y = pos.y + offs[i].dy;
         if (!in_bounds(x, y, grid_w, grid_h)) continue;
         cands[n++] = (point_t){ (int16_t)x, (int16_t)y };
     }
@@ -211,21 +211,21 @@ int radar_pick_random_point_on_circle_border(
 
 int unit_pick_patrol_target_local(
     point_t pos,
-    int sp,
+    int16_t dr,
     int grid_w, int grid_h,
     point_t *out_target
 ) {
     if (!out_target) return 0;
-    if (sp < 0) return 0;
+    if (dr < 0) return 0;
     // 75% of speed radius (integer)
-    const int r = (sp * 3) / 4;
-    return radar_pick_random_point_in_circle(pos.x, pos.y, r, grid_w, grid_h, out_target);
+    // const int r = (dr * 3) / 4;
+    return radar_pick_random_point_in_circle(pos.x, pos.y, dr, grid_w, grid_h, out_target);
 }
 
 int unit_compute_goal_for_tick(
     point_t from,
     point_t target,
-    int sp,
+    int16_t sp,
     int grid_w, int grid_h,
     point_t *out_goal
 ) {
@@ -286,9 +286,9 @@ static inline int idx_of_local(int x, int y, int minx, int miny, int lw) {
 static point_t bfs_next_step_local(
     point_t from,
     point_t goal,
-    int sp,
-    const int16_t *grid,
-    int grid_w, int grid_h, int stride
+    int16_t sp,
+    int grid_w, int grid_h,
+    const unit_id_t grid[grid_w][grid_h]
 ) {
     // No movement possible
     if (sp <= 0) return from;
@@ -363,7 +363,7 @@ static point_t bfs_next_step_local(
 
             // must be empty (except the starting cell)
             if (!(nx == from.x && ny == from.y)) {
-                if (grid[ny * stride + nx] != 0) continue;
+                if (grid[nx][ny] != 0) continue;
             }
 
             vis[nidx] = 1;
@@ -407,21 +407,234 @@ static point_t bfs_next_step_local(
     }
 }
 
+// --- int-coordinate helpers (unit_logic.c local) ---
+static inline int in_bounds_i(int x, int y, int w, int h) {
+    return (x >= 0 && x < w && y >= 0 && y < h);
+}
+
+int in_disk_i(int x, int y, int cx, int cy, int r) {
+    int dx = x - cx;
+    int dy = y - cy;
+    return (dx*dx + dy*dy) <= r*r;
+}
+
+// "Border" of disk in 4-neighborhood sense: inside disk, but has a 4-neighbor outside disk
+static inline int on_circle_border_4n_i(int x, int y, int cx, int cy, int r) {
+    if (!in_disk_i(x, y, cx, cy, r)) return 0;
+
+    // if any 4-neighbor is outside disk, treat this cell as border
+    if (!in_disk_i(x + 1, y,     cx, cy, r)) return 1;
+    if (!in_disk_i(x - 1, y,     cx, cy, r)) return 1;
+    if (!in_disk_i(x,     y + 1, cx, cy, r)) return 1;
+    if (!in_disk_i(x,     y - 1, cx, cy, r)) return 1;
+
+    return 0;
+}
+
+
+// Pick the best reachable position within SP disk, preferably on the SP border,
+// that is closest to `goal`. Returns that position (can be `from` if stuck).
+static point_t bfs_best_reachable_in_sp_disk_prefer_border(
+    point_t from,
+    point_t goal,
+    int16_t sp,
+    int w, int h,
+    const unit_id_t grid[w][h]
+) {
+    point_t out = from;
+    if (sp <= 0) return out;
+
+    const int max_cells = w * h;
+    if (max_cells <= 0) return out;
+
+    // visited bitmap + queue
+    uint8_t *vis = (uint8_t*)calloc((size_t)max_cells, 1);
+    if (!vis) return out;
+
+    // We only need to store visited cells; easiest is parent index per cell (flattened),
+    // but here we only need the final cell, not a path. Still store parent if you
+    // later want the actual step chain.
+    int *q = (int*)malloc((size_t)max_cells * sizeof(int));
+    if (!q) { free(vis); return out; }
+
+    const int sx = from.x, sy = from.y;
+    const int sidx = sy * w + sx;
+
+    // If start is out of bounds, give up
+    if (!in_bounds_i(sx, sy, w, h)) { free(q); free(vis); return out; }
+
+    // BFS within SP disk; blocked cells are grid!=0 (adjust if your project uses other meaning)
+    int head = 0, tail = 0;
+    q[tail++] = sidx;
+    vis[sidx] = 1;
+
+    int best_border_idx = -1;
+    int best_border_d2 = INT_MAX;
+
+    int best_any_idx = -1;
+    int best_any_d2 = INT_MAX;
+
+    while (head < tail) {
+        int idx = q[head++];
+        int x = idx % w;
+        int y = idx / w;
+
+        // Only consider cells inside SP disk
+        if (!in_disk_i(x, y, sx, sy, sp)) continue;
+
+        // Evaluate candidate (skip blocked; start can be allowed)
+        if (!(x == sx && y == sy)) {
+            if (grid[x][y] != 0) {
+                // blocked cell can't be occupied
+                goto expand_neighbors;
+            }
+        }
+
+        // Candidate scoring: closer to goal is better
+        point_t p = { (int16_t)x, (int16_t)y };
+        int d2 = dist2(p, goal);
+
+        // Track best "any" reachable inside disk
+        if (d2 < best_any_d2) {
+            best_any_d2 = d2;
+            best_any_idx = idx;
+        }
+
+        // Track best reachable on border
+        if (on_circle_border_4n_i(x, y, sx, sy, sp)) {
+            if (d2 < best_border_d2) {
+                best_border_d2 = d2;
+                best_border_idx = idx;
+            }
+        }
+
+expand_neighbors:
+        // 4-neighborhood expansion
+        const int nx[4] = { x+1, x-1, x, x };
+        const int ny[4] = { y, y, y+1, y-1 };
+
+        for (int k = 0; k < 4; k++) {
+            int xx = nx[k], yy = ny[k];
+            if (!in_bounds_i(xx, yy, w, h)) continue;
+
+            // Keep BFS limited to disk early
+            if (!in_disk_i(xx, yy, sx, sy, sp)) continue;
+
+            // Don’t enqueue blocked cells (except allow start already handled)
+            if (grid[xx][yy] != 0) continue;
+
+            int nidx = yy * w + xx;
+            if (vis[nidx]) continue;
+            vis[nidx] = 1;
+            q[tail++] = nidx;
+        }
+    }
+
+    int chosen = (best_border_idx != -1) ? best_border_idx : best_any_idx;
+    if (chosen != -1) {
+        out.x = (int16_t)(chosen % w);
+        out.y = (int16_t)(chosen / w);
+    }
+
+    free(q);
+    free(vis);
+    return out;
+}
+
+
+int unit_compute_goal_for_tick_dr(
+    point_t from,
+    point_t target,
+    int16_t dr,
+    int grid_w, int grid_h,
+    point_t *out_goal
+) {
+    if (!out_goal) return 0;
+    if (dr < 0 || grid_w <= 0 || grid_h <= 0) return 0;
+
+    // If target itself is within detection/planning radius, use it as the goal.
+    if (in_bounds(target.x, target.y, grid_w, grid_h)) {
+        const int dr2 = dr * dr;
+        if (dist2(from, target) <= dr2) {
+            *out_goal = target;
+            return 1;
+        }
+    }
+
+    // Otherwise, pick the border point at distance ~dr that is closest to the target.
+    const int max_off = (2*dr + 1) * (2*dr + 1);
+    if (max_off <= 0) return 0;
+
+    offset_t *offs = (offset_t*)malloc((size_t)max_off * sizeof(offset_t));
+    if (!offs) return 0;
+
+    const int n_off = build_circle_border_offsets(dr, offs, max_off);
+    if (n_off <= 0) {
+        free(offs);
+        return 0;
+    }
+
+    int best_d2 = INT_MAX;
+    point_t best = from;
+    int found = 0;
+
+    for (int i = 0; i < n_off; i++) {
+        int gx = (int)from.x + (int)offs[i].dx;
+        int gy = (int)from.y + (int)offs[i].dy;
+        if (!in_bounds(gx, gy, grid_w, grid_h)) continue;
+
+        point_t g = { (int16_t)gx, (int16_t)gy };
+        int d2 = dist2(g, target);
+        if (d2 < best_d2) {
+            best_d2 = d2;
+            best = g;
+            found = 1;
+        }
+    }
+
+    free(offs);
+
+    if (!found) return 0;
+    *out_goal = best;
+    return 1;
+}
+
 
 int unit_next_step_towards(
     point_t from,
     point_t target,
-    int sp,
+    int16_t sp,
     int approach,
-    const int16_t *grid,
-    int grid_w, int grid_h, int grid_stride,
+    int grid_w, int grid_h,
+    const unit_id_t grid[grid_w][grid_h],
+    point_t *out_next
+) {
+    // Backwards-compatible behavior: if caller does not pass DR,
+    // treat DR == SP (old logic).
+    return unit_next_step_towards_dr(
+        from, target,
+        sp, sp,
+        approach,
+        grid_w, grid_h, grid,
+        out_next
+    );
+}
+
+int unit_next_step_towards_dr(
+    point_t from,
+    point_t target,
+    int16_t sp,
+    int16_t dr,
+    int approach,
+    int grid_w, int grid_h,
+    const unit_id_t grid[grid_w][grid_h],
     point_t *out_next
 ) {
     if (!out_next) return 0;
     *out_next = from;
 
-    if (!grid || grid_w <= 0 || grid_h <= 0 || grid_stride < grid_w) return 0;
-    if (sp < 0) return 0;
+    if (!grid || grid_w <= 0 || grid_h <= 0) return 0;
+    if (sp < 0 || dr < 0) return 0;
     if (approach < 0) approach = 0;
 
     // Already within approach radius (no move needed)
@@ -431,15 +644,28 @@ int unit_next_step_towards(
         return 1;
     }
 
+    // 1) Choose a farther planning "Goal" within DR.
     point_t goal;
-    if (!unit_compute_goal_for_tick(from, target, sp, grid_w, grid_h, &goal)) {
+    if (!unit_compute_goal_for_tick_dr(from, target, dr, grid_w, grid_h, &goal)) {
         *out_next = from;
         return 1;
     }
 
-    // Find next step toward the goal within this tick's movement radius
-    point_t step = bfs_next_step_local(from, goal, sp, grid, grid_w, grid_h, grid_stride);
+    // 2a) If goal is already reachable within SP, go directly to goal
+    if (in_disk_i(goal.x, goal.y, from.x, from.y, sp)) {
+        // goal must be in bounds and not blocked
+        if (in_bounds_i(goal.x, goal.y, grid_w, grid_h) &&
+            grid[goal.x][goal.y] == 0) {
+            *out_next = goal;
+            return 1;
+        }
+    }
 
+    // 2b) Otherwise, choose best reachable SP position (prefer border)
+    point_t step = bfs_best_reachable_in_sp_disk_prefer_border(
+        from, goal, sp,
+        grid_w, grid_h, grid
+    );
     *out_next = step;
     return 1;
 }

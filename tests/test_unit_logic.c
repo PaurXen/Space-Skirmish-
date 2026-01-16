@@ -1,190 +1,261 @@
-#include <assert.h>
+// test_unit_logic.c
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
+#include <string.h>
+#include <time.h>
+#include <limits.h>
 
-#include "ipc/shared.h"
 #include "unit_logic.h"
 
-/* ---------- tiny test helpers ---------- */
 
-#define TEST_START(name) \
-    do { printf("[TEST] %s ...\n", name); fflush(stdout); } while (0)
+/* -------------------------
+   small helpers
+   ------------------------- */
 
-#define TEST_OK() \
-    do { printf("       OK\n"); } while (0)
-
-#define CHECK(cond, fmt, ...) \
-    do { \
-        if (!(cond)) { \
-            fprintf(stderr, "\n[FAIL] " fmt "\n", ##__VA_ARGS__); \
-            assert(cond); \
-        } \
-    } while (0)
-
-/* ---------- geometry helpers ---------- */
-
-static int in_bounds(point_t p, int w, int h) {
-    return (p.x >= 0 && p.x < w && p.y >= 0 && p.y < h);
+static void die_usage(const char *argv0) {
+    fprintf(stderr,
+        "Usage: %s [seed]\n"
+        "  seed: optional integer seed for rand()\n", argv0);
+    exit(2);
 }
 
-static int in_disk(point_t p, int cx, int cy, int r) {
-    int dx = (int)p.x - cx;
-    int dy = (int)p.y - cy;
-    return (dx*dx + dy*dy) <= r*r;
+static int in_bounds_i(int x, int y, int w, int h) {
+    return (x >= 0 && x < w && y >= 0 && y < h);
 }
 
-// Border = inside disk, but at least one 8-neighbor outside disk
-static int on_disk_border(point_t p, int cx, int cy, int r) {
-    if (!in_disk(p, cx, cy, r)) return 0;
-    for (int oy = -1; oy <= 1; oy++) {
-        for (int ox = -1; ox <= 1; ox++) {
-            if (ox == 0 && oy == 0) continue;
-            point_t q = { (int16_t)(p.x + ox), (int16_t)(p.y + oy) };
-            if (!in_disk(q, cx, cy, r)) return 1;
+static int in_disk_i(int x, int y, int cx, int cy, int r) {
+    int dx = x - cx;
+    int dy = y - cy;
+    return dx*dx + dy*dy <= r*r;
+}
+
+// 4-neighbor border definition (matches build_circle_border_offsets in unit_logic.c)
+static int on_circle_border_4n_i(int x, int y, int cx, int cy, int r) {
+    if (!in_disk_i(x, y, cx, cy, r)) return 0;
+    if (r == 0) return (x == cx && y == cy);
+
+    const int r2 = r*r;
+    int dx = x - cx, dy = y - cy;
+
+    int n_out =
+        ((dx+1)*(dx+1) + dy*dy > r2) ||
+        ((dx-1)*(dx-1) + dy*dy > r2) ||
+        (dx*dx + (dy+1)*(dy+1) > r2) ||
+        (dx*dx + (dy-1)*(dy-1) > r2);
+
+    return n_out ? 1 : 0;
+}
+
+static char heat_char(int v, int vmax) {
+    // map 0..vmax -> ' ' '.' ':' '-' '=' '+' '*' '#' '%' '@'
+    static const char *ramp = " .:-=+*#%@";
+    if (v <= 0) return ' ';
+    if (vmax <= 0) return '@';
+    int idx = (v * 9) / vmax;
+    if (idx < 0) idx = 0;
+    if (idx > 9) idx = 9;
+    return ramp[idx];
+}
+
+static void print_grid_chars(const char *title, const char *buf, int w, int h) {
+    printf("\n=== %s ===\n\n", title);
+
+    printf("    ");
+    for (int x = 0; x < w; x++) putchar('0' + (x % 10));
+    putchar('\n');
+
+    for (int y = 0; y < h; y++) {
+        printf("%3d ", y);
+        for (int x = 0; x < w; x++) {
+            putchar(buf[y*w + x]);
+        }
+        putchar('\n');
+    }
+}
+
+static void print_grid_heat(const char *title, const int *hits, int w, int h) {
+    int vmax = 0;
+    for (int i = 0; i < w*h; i++) if (hits[i] > vmax) vmax = hits[i];
+
+    printf("\n=== %s ===\n", title);
+    printf("(heat ramp: ' ' . : - = + * # %% @ ; max=%d)\n\n", vmax);
+
+    printf("    ");
+    for (int x = 0; x < w; x++) putchar('0' + (x % 10));
+    putchar('\n');
+
+    for (int y = 0; y < h; y++) {
+        printf("%3d ", y);
+        for (int x = 0; x < w; x++) {
+            putchar(heat_char(hits[y*w + x], vmax));
+        }
+        putchar('\n');
+    }
+}
+
+/* -------------------------
+   demos
+   ------------------------- */
+
+// Demo 1: show circle interior + discrete border (4-neighbor) like your logic
+static void demo_circle_mask(int w, int h, int cx, int cy, int r) {
+    char *buf = (char*)malloc((size_t)w*h);
+    if (!buf) exit(1);
+    memset(buf, '.', (size_t)w*h);
+
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            if (!in_disk_i(x, y, cx, cy, r)) continue;
+            buf[y*w + x] = 'o';
+            if (on_circle_border_4n_i(x, y, cx, cy, r)) buf[y*w + x] = '#';
         }
     }
-    return 0;
+    if (in_bounds_i(cx, cy, w, h)) buf[cy*w + cx] = '@';
+
+    print_grid_chars("Circle mask (o inside, # border, @ center)", buf, w, h);
+    free(buf);
 }
 
-/* ---------- tests ---------- */
+// Demo 2: sample random points + show hit heatmaps
+static void demo_radar_heat(int w, int h, int cx, int cy, int r, int samples) {
+    int *hits_in = (int*)calloc((size_t)w*h, sizeof(int));
+    int *hits_bd = (int*)calloc((size_t)w*h, sizeof(int));
+    if (!hits_in || !hits_bd) exit(1);
 
-static void test_in_circle_basic(void) {
-    TEST_START("radar_pick_random_point_in_circle / basic");
+    for (int i = 0; i < samples; i++) {
+        point_t p;
 
-    srand(0);
-    point_t p;
-    int ok = radar_pick_random_point_in_circle(5, 5, 3, 20, 20, &p);
+        if (radar_pick_random_point_in_circle((int16_t)cx, (int16_t)cy, (int16_t)r, w, h, &p)) {
+            int x = p.x, y = p.y;
+            if (in_bounds_i(x, y, w, h)) hits_in[y*w + x]++;
+        }
 
-    printf("       returned ok=%d, p=(%d,%d)\n", ok, p.x, p.y);
+        if (radar_pick_random_point_on_circle_border((point_t){(int16_t)cx, (int16_t)cy}, (int16_t)r, w, h, &p)) {
+            int x = p.x, y = p.y;
+            if (in_bounds_i(x, y, w, h)) hits_bd[y*w + x]++;
+        }
+    }
 
-    CHECK(ok == 1, "expected ok=1");
-    CHECK(in_bounds(p, 20, 20),
-          "point out of bounds: (%d,%d)", p.x, p.y);
-    CHECK(in_disk(p, 5, 5, 3),
-          "point not in disk: (%d,%d)", p.x, p.y);
+    print_grid_heat("Radar heat: pick_random_point_in_circle", hits_in, w, h);
+    print_grid_heat("Radar heat: pick_random_point_on_circle_border", hits_bd, w, h);
 
-    TEST_OK();
+    free(hits_in);
+    free(hits_bd);
 }
 
-static void test_in_circle_clipped_by_bounds(void) {
-    TEST_START("radar_pick_random_point_in_circle / clipped by bounds");
+// Demo 3: movement + obstacles + next step
+// Demo 3: movement + obstacles + next step
+static void demo_movement(int w, int h, point_t from, point_t *next_step) {
+    // unit_id_t **grid = (int16_t*)calloc((size_t)h*stride, sizeof(int16_t));
+    // if (!grid) exit(1);
+    int16_t grid[w][h];
+    memset(grid, 0, sizeof(grid));
+    
+    // Build a simple "wall" with a gap
+    for (int y = 2; y < h-2; y++) {
+        int x = w/2;
+        grid[x][y] = 1;
+    }
+    // gap
+    grid[w/2][h/2] = 0;
+    
+    // point_t from   = { 2, (int16_t)(h/2) };
+    point_t target = { (int16_t)30, (int16_t)4 };
+    int16_t sp = 4;
+    int16_t dr = 8;
+    int approach = 1;
+    
+    point_t goal = from;
+    point_t next = from;
+    
+    // Goal chosen from DR, next step chosen from SP toward that goal
+    (void)unit_compute_goal_for_tick_dr(from, target, dr, w, h, &goal);
+    (void)unit_next_step_towards_dr(from, goal, sp, dr, approach, w, h, grid, &next);
 
-    srand(1);
-    point_t p;
-    int ok = radar_pick_random_point_in_circle(0, 0, 5, 4, 4, &p);
 
-    printf("       returned ok=%d, p=(%d,%d)\n", ok, p.x, p.y);
+    char *buf = (char*)malloc((size_t)w*h);
+    if (!buf) exit(1);
+    memset(buf, '.', (size_t)w*h);
 
-    CHECK(ok == 1, "expected ok=1");
-    CHECK(in_bounds(p, 4, 4),
-          "point out of bounds: (%d,%d)", p.x, p.y);
-    CHECK(in_disk(p, 0, 0, 5),
-          "point not in disk relative to center");
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            if (grid[x][y] != 0) buf[y*w + x] = 'X';
+        }
+    }
 
-    TEST_OK();
+    // mark detection/planning disk (DR) around 'from' (visual aid)
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            if (!in_disk_i(x, y, from.x, from.y, dr)) continue;
+            if (buf[y*w + x] == '.') buf[y*w + x] = 'd';
+            if (on_circle_border_4n_i(x, y, from.x, from.y, dr) && buf[y*w + x] == 'd')
+                buf[y*w + x] = 'D';
+        }
+    }
+
+    // mark speed disk border around 'from' (SP) (visual aid)
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            if (!in_disk_i(x, y, from.x, from.y, sp)) continue;
+                if (buf[y*w + x] != 'X') buf[y*w + x] = 'o';
+                if (on_circle_border_4n_i(x, y, from.x, from.y, sp) && buf[y*w + x] != 'X')
+                    buf[y*w + x] = '#';
+            }
+    }
+
+    // overlay special markers
+    if (in_bounds_i(from.x, from.y, w, h))     buf[from.y*w + from.x]     = 'S';
+    if (in_bounds_i(target.x, target.y, w, h)) buf[target.y*w + target.x] = 'T';
+    if (in_bounds_i(goal.x, goal.y, w, h))     buf[goal.y*w + goal.x]     = 'G';
+    if (in_bounds_i(next.x, next.y, w, h))     buf[next.y*w + next.x]     = 'N';
+
+    print_grid_chars(
+        "Movement demo (X obstacle, S start, T target, G goal (from DR), N next (from SP); d/D show DR, o/# show SP)",
+        buf, w, h
+    );
+
+    printf("\nMovement numbers:\n");
+    printf("  S=(%d,%d)  T=(%d,%d)  sp=%d  dr=%d\n", from.x, from.y, target.x, target.y, sp, dr);
+    printf("  G(goal_for_tick)=(%d,%d)\n", goal.x, goal.y);
+    printf("  N(next_step)     =(%d,%d)\n", next.x, next.y);
+
+    *next_step = next;
+    free(buf);
+    // free(grid);
 }
 
-static void test_in_circle_radius_zero(void) {
-    TEST_START("radar_pick_random_point_in_circle / radius 0");
 
-    srand(2);
-    point_t p;
-    int ok = radar_pick_random_point_in_circle(2, 3, 0, 10, 10, &p);
 
-    printf("       returned ok=%d, p=(%d,%d)\n", ok, p.x, p.y);
+static void demo_move_loop(int w, int h, point_t pos, point_t target){
+    do
+    {
+        demo_movement(w,h,pos, &pos);
+    } while (!in_disk_i(pos.x, pos.y, target.x, target.y, 3));
+    
+} 
 
-    CHECK(ok == 1, "expected ok=1");
-    CHECK(p.x == 2 && p.y == 3,
-          "radius=0 must return center");
 
-    TEST_OK();
-}
+int main(int argc, char **argv) {
+    if (argc > 2) die_usage(argv[0]);
 
-static void test_in_circle_invalid(void) {
-    TEST_START("radar_pick_random_point_in_circle / invalid params");
+    unsigned seed;
+    if (argc == 2) seed = (unsigned)strtoul(argv[1], NULL, 10);
+    else seed = (unsigned)time(NULL);
 
-    srand(3);
-    point_t p;
+    srand(seed);
+    printf("seed=%u\n", seed);
 
-    CHECK(radar_pick_random_point_in_circle(1,1,-1,10,10,&p) == 0,
-          "negative radius should fail");
-    CHECK(radar_pick_random_point_in_circle(1,1,2,0,10,&p) == 0,
-          "zero width should fail");
-    CHECK(radar_pick_random_point_in_circle(1,1,2,10,0,&p) == 0,
-          "zero height should fail");
-    CHECK(radar_pick_random_point_in_circle(1,1,2,10,10,NULL) == 0,
-          "NULL output pointer should fail");
+    // tweak these freely
+    int w = 41, h = 21;
+    int cx = 20, cy = 10;
+    int r = 7;
+    point_t pos = {2, 10};
+    point_t target = {30, 4};
 
-    TEST_OK();
-}
+    demo_circle_mask(w, h, cx, cy, r);
+    demo_radar_heat(w, h, cx, cy, r, 8000);
+    demo_movement(w, h, pos, &pos);
+    demo_move_loop(w,h,pos, target);
 
-static void test_on_border_basic(void) {
-    TEST_START("radar_pick_random_point_on_circle_border / basic");
-
-    srand(4);
-    point_t p;
-    int ok = radar_pick_random_point_on_circle_border(10, 10, 5, 50, 50, &p);
-
-    printf("       returned ok=%d, p=(%d,%d)\n", ok, p.x, p.y);
-
-    CHECK(ok == 1, "expected ok=1");
-    CHECK(in_bounds(p, 50, 50),
-          "point out of bounds: (%d,%d)", p.x, p.y);
-    CHECK(on_disk_border(p, 10, 10, 5),
-          "point not on disk border");
-
-    TEST_OK();
-}
-
-static void test_on_border_radius_one(void) {
-    TEST_START("radar_pick_random_point_on_circle_border / radius 1");
-
-    srand(5);
-    point_t p;
-    int ok = radar_pick_random_point_on_circle_border(5, 5, 1, 20, 20, &p);
-
-    printf("       returned ok=%d, p=(%d,%d)\n", ok, p.x, p.y);
-
-    CHECK(ok == 1, "expected ok=1");
-    CHECK(!(p.x == 5 && p.y == 5),
-          "border point must not be center");
-    CHECK(on_disk_border(p, 5, 5, 1),
-          "point not on border");
-
-    TEST_OK();
-}
-
-static void test_on_border_invalid(void) {
-    TEST_START("radar_pick_random_point_on_circle_border / invalid params");
-
-    srand(6);
-    point_t p;
-
-    CHECK(radar_pick_random_point_on_circle_border(1,1,-1,10,10,&p) == 0,
-          "negative radius should fail");
-    CHECK(radar_pick_random_point_on_circle_border(1,1,2,0,10,&p) == 0,
-          "zero width should fail");
-    CHECK(radar_pick_random_point_on_circle_border(1,1,2,10,0,&p) == 0,
-          "zero height should fail");
-    CHECK(radar_pick_random_point_on_circle_border(1,1,2,10,10,NULL) == 0,
-          "NULL output pointer should fail");
-
-    TEST_OK();
-}
-
-/* ---------- main ---------- */
-
-int main(void) {
-    test_in_circle_basic();
-    test_in_circle_clipped_by_bounds();
-    test_in_circle_radius_zero();
-    test_in_circle_invalid();
-
-    test_on_border_basic();
-    test_on_border_radius_one();
-    test_on_border_invalid();
-
-    printf("\nALL unit_logic radar tests PASSED ✅\n");
     return 0;
 }

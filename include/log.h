@@ -27,7 +27,7 @@ typedef enum {
  * - unit_id: 0 for CC, otherwise the unit id.
  * - Returns 0 on success, -1 on failure.
  */
-int log_init(const char *role, uint16_t unit_id);
+int log_init(const char *role, int16_t unit_id);
 
 /* Close logger (idempotent). */
 void log_close(void);

@@ -6,7 +6,7 @@ IPC_OBJS=$(IPC_SRCS:.c=.o)
 
 all: command_center battleship
 
-command_center: src/command_center.o src/ipc/semaphores.o src/ipc/ipc_context.o src/utils.o
+command_center: src/command_center.o src/ipc/semaphores.o src/ipc/ipc_context.o src/utils.o src/terminal_tee.o
 	$(CC) $(CFLAGS) -o command_center $^
 
 battleship: src/battleship.o src/ipc/semaphores.o src/ipc/ipc_context.o src/utils.o src/unit_logic.o src/unit_stats.o src/unit_ipc.o src/weapon_stats.o

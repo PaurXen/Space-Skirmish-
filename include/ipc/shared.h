@@ -15,7 +15,7 @@ typedef int16_t unit_id_t;
 /* Simple enums stored as small integers in shared memory */
 typedef enum { NONE = 0, LR_CANNON = 1, MR_CANNON = 2, SR_CANNON = 3, LR_GUN = 4, MR_GUN = 5, SR_GUN = 6 } weapon_type_t;
 typedef enum { PATROL = 0, ATTACK = 1, MOVE = 2, MOVE_ATTACK = 3, GUARD = 4 } unit_order_t;
-typedef enum { FACTION_REPUBLIC=1, FACTION_CIS=2 } faction_t;
+typedef enum { FACTION_NONE = 0, FACTION_REPUBLIC=1, FACTION_CIS=2 } faction_t;
 typedef enum { TYPE_FLAGSHIP=1, TYPE_DESTROYER=2, TYPE_CARRIER=3, TYPE_FIGTER=4, TYPE_BOMBER=5, TYPE_ELITE=6 } unit_type_t;
 
 typedef struct {
@@ -31,7 +31,7 @@ typedef struct {
     uint8_t faction;        /* faction_t */
     uint8_t type;           /* unit_type_t */
     uint8_t alive;          /* 1 == alive, 0 == dead */
-    point_t position;       /* position on grid (N x M) */
+    point_t position;       /* position on grid (M x N) */
     uint32_t flags;         /* reserved for status / orders */
     int32_t dmg_payload;
 } unit_entity_t;
@@ -72,7 +72,7 @@ typedef struct {
     uint16_t tick_done;     /* how many units have finished this tick */
     uint32_t last_step_tick[MAX_UNITS+1]; /* per-unit last-tick performed */
 
-    unit_id_t grid[N][M];   /* grid of unit IDs (0 == empty) */
+    unit_id_t grid[M][N];   /* grid of unit IDs (0 == empty) */
     unit_entity_t units[MAX_UNITS+1]; /* units indexed by unit_id (0 unused) */
 } shm_state_t;
 

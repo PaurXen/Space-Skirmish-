@@ -77,7 +77,7 @@ static void open_global_log(void) {
  * Creates per-process log file under run dir and opens ALL.log.
  * Returns 0 on success, -1 on failure.
  */
-int log_init(const char *role, uint16_t unit_id) {
+int log_init(const char *role, int16_t unit_id) {
     /* pick run directory from env if set (inherited by child processes) */
     const char *rd = getenv("SKIRMISH_RUN_DIR");
     if (rd && *rd) {

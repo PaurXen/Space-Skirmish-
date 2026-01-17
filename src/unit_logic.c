@@ -38,19 +38,19 @@ float accuracy_multiplier(weapon_type_t weapon, unit_type_t target) {
     if (weapon == NONE) return 0.0f;
     if (LR_CANNON <= weapon && weapon <= SR_CANNON) {
         if (target == TYPE_FLAGSHIP || target == TYPE_DESTROYER || target == TYPE_CARRIER)
-            return 0.0f;
-        if (target == TYPE_FIGTER || target == TYPE_BOMBER || target == TYPE_ELITE)
-            return 0.75f;
-    } else if (SR_GUN <= weapon && weapon <= LR_GUN) {
-        if (target == TYPE_FLAGSHIP || target == TYPE_DESTROYER || target == TYPE_CARRIER)
             return 0.75f;
         if (target == TYPE_FIGTER || target == TYPE_BOMBER || target == TYPE_ELITE)
             return 0.25f;
+    } else if (SR_GUN <= weapon && weapon <= LR_GUN) {
+        if (target == TYPE_FLAGSHIP || target == TYPE_DESTROYER || target == TYPE_CARRIER)
+            return 0.0f;
+        if (target == TYPE_FIGTER || target == TYPE_BOMBER || target == TYPE_ELITE)
+            return 0.75f;
     }
     return 0.0f;
 }
 
-int64_t demage_to_target(unit_entity_t *attacker, unit_entity_t *target, weapon_stats_t *weapon) {
+int64_t damage_to_target(unit_entity_t *attacker, unit_entity_t *target, weapon_stats_t *weapon) {
     float accuracy = accuracy_multiplier(weapon->type, target->type);
     float roll = (float)rand() / (float)RAND_MAX;
 
@@ -72,11 +72,18 @@ static inline int in_bounds(int x, int y, int w, int h) {
 
 static inline int sqr_i(int v) { return v * v; }
 
-static inline int dist2(point_t a, point_t b) {
+int dist2(point_t a, point_t b) {
     int dx = (int)a.x - (int)b.x;
     int dy = (int)a.y - (int)b.y;
     return dx*dx + dy*dy;
 }
+
+int in_disk_i(int x, int y, int cx, int cy, int r) {
+    int dx = x - cx;
+    int dy = y - cy;
+    return (dx*dx + dy*dy) <= r*r;
+}
+
 
 /* Build a list of unique offsets on the *discrete* circle border of radius r.
  * Border definition:
@@ -261,6 +268,7 @@ int unit_compute_goal_for_tick(
     for (int i = 0; i < n_off; i++) {
         int gx = (int)from.x + (int)offs[i].dx;
         int gy = (int)from.y + (int)offs[i].dy;
+
         if (!in_bounds(gx, gy, grid_w, grid_h)) continue;
 
         point_t g = { (int16_t)gx, (int16_t)gy };
@@ -407,16 +415,8 @@ static point_t bfs_next_step_local(
     }
 }
 
-// --- int-coordinate helpers (unit_logic.c local) ---
-static inline int in_bounds_i(int x, int y, int w, int h) {
-    return (x >= 0 && x < w && y >= 0 && y < h);
-}
 
-int in_disk_i(int x, int y, int cx, int cy, int r) {
-    int dx = x - cx;
-    int dy = y - cy;
-    return (dx*dx + dy*dy) <= r*r;
-}
+
 
 // "Border" of disk in 4-neighborhood sense: inside disk, but has a 4-neighbor outside disk
 static inline int on_circle_border_4n_i(int x, int y, int cx, int cy, int r) {
@@ -461,7 +461,7 @@ static point_t bfs_best_reachable_in_sp_disk_prefer_border(
     const int sidx = sy * w + sx;
 
     // If start is out of bounds, give up
-    if (!in_bounds_i(sx, sy, w, h)) { free(q); free(vis); return out; }
+    if (!in_bounds(sx, sy, w, h)) { free(q); free(vis); return out; }
 
     // BFS within SP disk; blocked cells are grid!=0 (adjust if your project uses other meaning)
     int head = 0, tail = 0;
@@ -515,7 +515,7 @@ expand_neighbors:
 
         for (int k = 0; k < 4; k++) {
             int xx = nx[k], yy = ny[k];
-            if (!in_bounds_i(xx, yy, w, h)) continue;
+            if (!in_bounds(xx, yy, w, h)) continue;
 
             // Keep BFS limited to disk early
             if (!in_disk_i(xx, yy, sx, sy, sp)) continue;
@@ -654,7 +654,7 @@ int unit_next_step_towards_dr(
     // 2a) If goal is already reachable within SP, go directly to goal
     if (in_disk_i(goal.x, goal.y, from.x, from.y, sp)) {
         // goal must be in bounds and not blocked
-        if (in_bounds_i(goal.x, goal.y, grid_w, grid_h) &&
+        if (in_bounds(goal.x, goal.y, grid_w, grid_h) &&
             grid[goal.x][goal.y] == 0) {
             *out_next = goal;
             return 1;
@@ -668,4 +668,32 @@ int unit_next_step_towards_dr(
     );
     *out_next = step;
     return 1;
+}
+
+
+
+
+int unit_radar(
+    unit_id_t unit_id,
+    unit_stats_t u_st,
+    unit_entity_t *units,
+    unit_id_t *out,
+    faction_t faction
+){
+    int count = 0;
+    point_t from = units[unit_id].position;
+
+    for (unit_id_t id = 1; id <= MAX_UNITS; id++){
+        if (id == unit_id) continue;
+        if (faction != FACTION_NONE && units[id].faction == faction) continue;
+        if (!units[id].pid) continue;
+        if (!units[id].alive) continue;
+
+        point_t pos = units[id].position;
+
+        if (in_disk_i(pos.x, pos.y, from.x, from.y, u_st.dr)){
+            out[count++] = id;
+        }
+    }
+    return count;
 }

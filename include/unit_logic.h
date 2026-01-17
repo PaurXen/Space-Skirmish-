@@ -6,7 +6,7 @@
 float damage_multiplyer(unit_type_t unit, unit_type_t target);
 float accuracy_multiplier(weapon_type_t weapon, unit_type_t target);
 
-int64_t demage_to_target(unit_entity_t *attacker, unit_entity_t *target, weapon_stats_t *weapon);
+int64_t damage_to_target(unit_entity_t *attacker, unit_entity_t *target, weapon_stats_t *weapon);
 
 /* -----------------------------
  * Random radar helpers
@@ -27,6 +27,8 @@ int radar_pick_random_point_on_circle_border(
 );
 
 int in_disk_i(int x, int y, int cx, int cy, int r);
+
+int dist2(point_t a, point_t b);
 
 /* -----------------------------
  * Movement + local pathfinding
@@ -102,4 +104,20 @@ int unit_next_step_towards_dr(
     int grid_w, int grid_h,
     const unit_id_t grid[grid_w][grid_h],
     point_t *out_next
+);
+
+
+
+/* -----------------------------
+ * Targeting
+ * -----------------------------
+ */
+
+
+int unit_radar(
+    unit_id_t unit_id,
+    unit_stats_t u_st,
+    unit_entity_t *units,
+    unit_id_t *out,
+    faction_t faction
 );

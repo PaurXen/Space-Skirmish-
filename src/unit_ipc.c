@@ -12,7 +12,7 @@ unit_id_t check_if_occupied(ipc_ctx_t *ctx, point_t point) {
     
 }
 
-void unit_move_to(ipc_ctx_t *ctx, unit_id_t unit_id, point_t new_pos) {
+void unit_change_position(ipc_ctx_t *ctx, unit_id_t unit_id, point_t new_pos) {
     // sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK);
     point_t old_pos = ctx->S->units[unit_id].position;
     

@@ -53,21 +53,21 @@ static int esure_ftok_file(const char *path) {
  * to perform a safe reset. On first-run we set magic, next_unit_id and zero
  * sensible counters. Returns 0 on success, -1 on error (errno set).
  */
-static int init_if_needed(ipc_ctx_t *ctx) {
-    /* acquire global lock to safely inspect/modify shared state */
-    if (sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK) == -1) return -1;
+// static int init_if_needed(ipc_ctx_t *ctx) {
+//     /* acquire global lock to safely inspect/modify shared state */
+//     if (sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK) == -1) return -1;
 
-    if (ctx->S->magic != SHM_MAGIC) {
-        memset(ctx->S, 0, sizeof(*(ctx->S)));
-        ctx->S->magic = SHM_MAGIC;
-        ctx->S->next_unit_id = 1;
-        ctx->S->ticks = 0;
-        ctx->S->unit_count = 0;
-    }
+//     if (ctx->S->magic != SHM_MAGIC) {
+//         memset(ctx->S, 0, sizeof(*(ctx->S)));
+//         ctx->S->magic = SHM_MAGIC;
+//         ctx->S->next_unit_id = 1;
+//         ctx->S->ticks = 0;
+//         ctx->S->unit_count = 0;
+//     }
 
-    if (sem_unlock(ctx->sem_id, SEM_GLOBAL_LOCK) == -1) return -1;
-    return 0;
-}
+//     if (sem_unlock(ctx->sem_id, SEM_GLOBAL_LOCK) == -1) return -1;
+//     return 0;
+// }
 
 /* ipc_create
  *  - Prepare ctx and create/reset IPC objects for a fresh run.

@@ -8,15 +8,16 @@
 #define M 80
 #define N 40
 #define MAX_UNITS 64
+#define MAX_WEAPONS 4
 
 /* unit_id stored in grid (0 = empty) */
 typedef int16_t unit_id_t;
 
 /* Simple enums stored as small integers in shared memory */
 typedef enum { NONE = 0, LR_CANNON = 1, MR_CANNON = 2, SR_CANNON = 3, LR_GUN = 4, MR_GUN = 5, SR_GUN = 6 } weapon_type_t;
-typedef enum { PATROL = 0, ATTACK = 1, MOVE = 2, MOVE_ATTACK = 3, GUARD = 4 } unit_order_t;
+typedef enum { DO_NOTHING= 0, PATROL = 1, ATTACK = 2, MOVE = 3, MOVE_ATTACK = 4, GUARD = 5 } unit_order_t;
 typedef enum { FACTION_NONE = 0, FACTION_REPUBLIC=1, FACTION_CIS=2 } faction_t;
-typedef enum { TYPE_FLAGSHIP=1, TYPE_DESTROYER=2, TYPE_CARRIER=3, TYPE_FIGTER=4, TYPE_BOMBER=5, TYPE_ELITE=6 } unit_type_t;
+typedef enum { DUMMY = 0, TYPE_FLAGSHIP=1, TYPE_DESTROYER=2, TYPE_CARRIER=3, TYPE_FIGTER=4, TYPE_BOMBER=5, TYPE_ELITE=6 } unit_type_t;
 
 typedef struct {
     int16_t x;
@@ -39,11 +40,17 @@ typedef struct {
 typedef struct {
     int16_t dmg;
     int16_t range;
+    unit_id_t w_target;
     weapon_type_t type;
 }weapon_stats_t;
 
 typedef struct {
-    const weapon_type_t *arr;
+    weapon_type_t types[MAX_WEAPONS];
+    int n;
+} weapon_loadout_types_view_t;
+
+typedef struct {
+    weapon_stats_t arr[MAX_WEAPONS];
     uint8_t count;
 } weapon_loadout_view_t;
 

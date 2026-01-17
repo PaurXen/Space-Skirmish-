@@ -233,7 +233,7 @@ int main(int argc, char **argv) {
     const char *ftok_path = "./ipc.key";
     const char *battleship = "./battleship";
 
-    const useconds_t tick_us = 200 * 1000; /* tick interval */
+    const useconds_t tick_us = 1000 * 1000; /* tick interval */
 
     for (int i=1; i<argc;i++) {
         if (!strcmp(argv[i], "--ftok") && i+1<argc) ftok_path = argv[++i];
@@ -283,7 +283,7 @@ int main(int argc, char **argv) {
     spawn_battleship(&ctx, battleship, u1, FACTION_REPUBLIC, TYPE_DESTROYER, 5, 10, ftok_path);
     spawn_battleship(&ctx, battleship, u2, FACTION_REPUBLIC, TYPE_CARRIER,   8, 12, ftok_path);
     spawn_battleship(&ctx, battleship, u3, FACTION_CIS,      TYPE_DESTROYER, 23, 30, ftok_path);
-    spawn_battleship(&ctx, battleship, u4, FACTION_CIS,      TYPE_CARRIER,   62, 32, ftok_path);
+    spawn_battleship(&ctx, battleship, u4, FACTION_CIS,      DUMMY,          62, 32, ftok_path);
 
     LOGI("[CC] shm_id=%d sem_id=%d spawned 4 battleships. Ctrl+C to stop.",ctx.shm_id, ctx.sem_id);
     printf("[CC] shm_id=%d sem_id=%d spawned 4 battleships. Ctrl+C to stop.\n",ctx.shm_id, ctx.sem_id);
@@ -347,7 +347,7 @@ int main(int argc, char **argv) {
 
         
         
-        if ((t % 25) == 0) {
+        if ((t % 1) == 0) {
             LOGI("ticks=%u alive_units=%u", t, alive);
             printf("[CC] ticks=%u alive_units=%u\n", t, alive);
             fflush(stdout);

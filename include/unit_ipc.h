@@ -8,7 +8,7 @@
 unit_id_t check_if_occupied(ipc_ctx_t *ctx, point_t point);
 
 // changes unit position and moves it on the grid to specific location
-void unit_move_to(ipc_ctx_t *ctx, unit_id_t unit_id, point_t new_pos);
+void unit_change_position(ipc_ctx_t *ctx, unit_id_t unit_id, point_t new_pos);
 
 // depending on weapon type sends mesage to hit target unit process
 void unit_add_to_dmg_payload(ipc_ctx_t *ctx,uint16_t target_id, int64_t dmg);

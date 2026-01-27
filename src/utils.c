@@ -26,7 +26,7 @@ static FILE *g_logf = NULL;
 /* global combined log (fd opened with O_APPEND for atomic line appends) */
 static int g_all_fd = -1;
 
-static log_level_t g_min_lvl = LOG_LVL_INFO;
+static log_level_t g_min_lvl = LOG_LVL_DEBUG;
 static char g_role[8] = "??";
 static uint16_t g_unit_id = 0;
 
@@ -77,7 +77,7 @@ static void open_global_log(void) {
  * Creates per-process log file under run dir and opens ALL.log.
  * Returns 0 on success, -1 on failure.
  */
-int log_init(const char *role, uint16_t unit_id) {
+int log_init(const char *role, int16_t unit_id) {
     /* pick run directory from env if set (inherited by child processes) */
     const char *rd = getenv("SKIRMISH_RUN_DIR");
     if (rd && *rd) {

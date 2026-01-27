@@ -20,6 +20,8 @@ union semun {
 typedef struct {
     int shm_id;
     int sem_id;
+    int q_req;
+    int q_rep;
     shm_state_t *S;
     int owner;      /* 1 if created by CC */
     char ftok_path[256];

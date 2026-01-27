@@ -37,9 +37,15 @@ int sem_op_retry(int semid, struct sembuf * ops, size_t nops) {
  *   - If stop_flag == NULL this behaves like sem_op_retry (retries on EINTR).
  */
 int sem_op_intr(int semid, struct sembuf *ops, size_t nops, volatile sig_atomic_t *stop_flag) {
-
     for (;;) {
+        /* CRITICAL: Check stop_flag BEFORE blocking call! */
+        if (stop_flag && *stop_flag) {
+            errno = EINTR;
+            return -1;
+        }
+        
         if (semop(semid, ops, (unsigned)nops) == 0) return 0;
+        
         if (errno == EINTR) {
             if (stop_flag && *stop_flag) {
                 errno = EINTR;
@@ -61,6 +67,12 @@ int sem_lock(int semid, unsigned short semnum) {
     struct sembuf op = {.sem_num=semnum, .sem_op=-1, .sem_flg=0};
     return sem_op_retry(semid, &op, 1);
 }
+
+int sem_lock_intr(int semid, unsigned short semnum, volatile sig_atomic_t *stop_flag) {
+    struct sembuf op = {.sem_num=semnum, .sem_op=-1, .sem_flg=0};
+    return sem_op_intr(semid, &op, 1, stop_flag);
+}
+
 
 int sem_unlock(int semid , unsigned short semnum) {
     struct sembuf op = {.sem_num=semnum, .sem_op=+1, .sem_flg=0};

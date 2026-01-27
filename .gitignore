@@ -1,15 +1,19 @@
 # ===== Logs =====
 logs/
-
+*.log
 # ===== Build artifacts =====
 *.o
 command_center
 battleship
+squadron
+test
 
 # ===== IPC / runtime files =====
 ipc.key
 
 # ===== Editor / OS junk =====
+todo.txt
+*scrap*
 *.swp
 *.swo
 *.tmp

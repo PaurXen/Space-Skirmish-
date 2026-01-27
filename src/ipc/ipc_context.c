@@ -84,11 +84,27 @@ int ipc_create(ipc_ctx_t *ctx, const char *ftok_path) {
     strncpy(ctx->ftok_path, ftok_path, sizeof(ctx->ftok_path)-1);
 
     if (esure_ftok_file(ftok_path) == -1) return -1;
+    
+    key_t req_key = make_key(ftok_path, 'Q');
+    key_t rep_key = make_key(ftok_path, 'R');
+    if (req_key == -1 || rep_key == -1) return -1;
+
+    // create-or-open
+    ctx->q_req = msgget(req_key, IPC_CREAT | 0600);
+    ctx->q_rep = msgget(rep_key, IPC_CREAT | 0600);
+    if (ctx->q_req == -1 || ctx->q_rep == -1) return -1;
+
+    // optional but recommended for "fresh run": clear stale queues
+    msgctl(ctx->q_req, IPC_RMID, NULL);
+    msgctl(ctx->q_rep, IPC_RMID, NULL);
+    ctx->q_req = msgget(req_key, IPC_CREAT | 0600);
+    ctx->q_rep = msgget(rep_key, IPC_CREAT | 0600);
+    if (ctx->q_req == -1 || ctx->q_rep == -1) return -1;
 
     key_t shm_key = make_key(ftok_path, 'S');
     key_t sem_key = make_key(ftok_path, 'M');
     if (shm_key == -1 || sem_key == -1) return -1;
-
+    
     // 1) Semaphores: create-or-open, then RESET ALWAYS for fresh run
     ctx->sem_id = semget(sem_key, SEM_COUNT, IPC_CREAT | 0600);
     if (ctx->sem_id == -1) return -1;
@@ -132,6 +148,15 @@ int ipc_attach(ipc_ctx_t *ctx, const char *ftok_path) {
 
     strncpy(ctx->ftok_path, ftok_path, sizeof(ctx->ftok_path)-1);
 
+    key_t req_key = make_key(ftok_path, 'Q');
+    key_t rep_key = make_key(ftok_path, 'R');
+    if (req_key == -1 || rep_key == -1) return -1;
+
+    ctx->q_req = msgget(req_key, 0600);
+    ctx->q_rep = msgget(rep_key, 0600);
+    if (ctx->q_req == -1 || ctx->q_rep == -1) return -1;
+
+
     key_t shm_key = make_key(ftok_path, 'S');
     key_t sem_key = make_key(ftok_path, 'M');
     if (shm_key == -1 || sem_key == -1) return -1;
@@ -174,6 +199,15 @@ int ipc_detach(ipc_ctx_t *ctx) {
  */
 int ipc_destroy(ipc_ctx_t* ctx) {
     int ok =0;
+
+    if (ctx->q_req != -1) { 
+        if (msgctl(ctx->q_req, IPC_RMID, NULL) == -1) ok = -1;
+        ctx->q_req = -1; 
+    }
+    if (ctx->q_rep != -1) {
+        if (msgctl(ctx->q_rep, IPC_RMID, NULL) == -1) ok = -1;
+        ctx->q_rep = -1;
+    }
 
     if (ctx->shm_id != -1) {
             if (shmctl(ctx->shm_id, IPC_RMID, NULL) == -1) ok = -1;

@@ -50,8 +50,7 @@ float accuracy_multiplier(weapon_type_t weapon, unit_type_t target) {
     return 0.0f;
 }
 
-int64_t damage_to_target(unit_entity_t *attacker, unit_entity_t *target, weapon_stats_t *weapon) {
-    float accuracy = accuracy_multiplier(weapon->type, target->type);
+st_points_t damage_to_target(unit_entity_t *attacker, unit_entity_t *target, weapon_stats_t *weapon, float accuracy) {
     float roll = (float)rand() / (float)RAND_MAX;
 
     if (roll > accuracy) {
@@ -59,14 +58,14 @@ int64_t damage_to_target(unit_entity_t *attacker, unit_entity_t *target, weapon_
         return 0;
     }
 
-    return damage_multiplyer(attacker->type, target->type) * weapon->dmg;
+    return (st_points_t)(damage_multiplyer(attacker->type, target->type) * (float)weapon->dmg);
     
 }
 
 
 
 
-static inline int in_bounds(int x, int y, int w, int h) {
+int in_bounds(int x, int y, int w, int h) {
     return (x >= 0 && x < w && y >= 0 && y < h);
 }
 
@@ -697,3 +696,15 @@ int unit_radar(
     }
     return count;
 }
+
+int16_t unit_calculate_aproach(weapon_loadout_view_t ba, unit_type_t t_type){
+    int16_t min_range = INT16_MAX;
+    float ac = 0;
+    for (int8_t i = 0; i < ba.count; i++){
+        ac = accuracy_multiplier(ba.arr[i].type, t_type);
+        if (ac > 0 && ac < min_range) 
+            min_range =  ba.arr[i].range;
+    }   
+    return min_range-1;
+}
+

@@ -10,6 +10,7 @@
 #include "ipc/ipc_context.h"
 #include "ipc/semaphores.h"
 #include "ipc/shared.h"
+#include "ipc/ipc_mesq.h"
 
 #include "weapon_stats.h"
 #include "unit_stats.h"
@@ -17,11 +18,25 @@
 #include "unit_ipc.h"
 #include "log.h"
 
-static volatile sig_atomic_t g_stop = 0;
-
 static volatile unit_order_t order = PATROL;
 
-void print_stats(unit_id_t id, unit_stats_t st) {
+static volatile sig_atomic_t g_stop = 0;
+
+static volatile sig_atomic_t g_damage_pending = 0;
+
+static void on_damage(int sig) {
+    (void)sig;
+    LOGD("g_damage_pending flag raised. (g_damage_pending = 1)");
+    g_damage_pending = 1;
+}
+
+static void on_signal(int sig) {
+    (void)sig;
+    LOGD("g_stop flag raised. (g_stop = 1)");
+    g_stop = 1;
+}
+
+static void print_stats(unit_id_t id, unit_stats_t st) {
     printf("[BS %d] STATS:\n");
     printf("hp=%d\n", st.hp);
     printf("sh=%d\n", st.sh);
@@ -41,107 +56,6 @@ void print_stats(unit_id_t id, unit_stats_t st) {
     fflush(stdout);
 }
 
-static void on_signal(int sig) {
-    (void)sig;
-    LOGD("g_stop flag raised. (g_stop = 1)");
-    g_stop = 1;
-}
-
-
-
-static void mark_dead(ipc_ctx_t *ctx, unit_id_t unit_id) {
-    sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK);
-
-    if (unit_id <= MAX_UNITS) {
-        ctx->S->units[unit_id].alive = 0;
-
-        int x = (int)ctx->S->units[unit_id].position.x;
-        int y = (int)ctx->S->units[unit_id].position.y;
-
-        if (x >= 0 && x < M && y >= 0 && y < N) {
-            if (ctx->S->grid[x][y] == (unit_id_t)unit_id)
-                ctx->S->grid[x][y] = 0;
-        }
-    }
-
-    sem_unlock(ctx->sem_id, SEM_GLOBAL_LOCK);
-}
-
-
-static void unit_move(ipc_ctx_t *ctx, unit_id_t unit_id, point_t from, point_t *target_pri, unit_stats_t *st, int aproach){
-    point_t goal = from;
-    point_t next = from;
-    
-    // Goal chosen from DR, next step chosen from SP toward that goal
-    (void)unit_compute_goal_for_tick_dr(from, *target_pri, st->dr, M, N, &goal);
-    (void)unit_next_step_towards_dr(from, goal, st->sp, st->dr, aproach, M, N, ctx->S->grid, &next);
-
-    unit_change_position(ctx, unit_id, next);
-}
-
-static int8_t unit_chose_patrol_point(ipc_ctx_t *ctx, unit_id_t unit_id, point_t *target_pri, unit_stats_t st){
-    // pick new patrol target
-    if (radar_pick_random_point_on_circle_border(
-            ctx->S->units[unit_id].position,
-            st.dr,
-            M, N,
-            target_pri)) {
-        LOGD("[BS %u] picked new patrol target (%d,%d)",
-                unit_id, target_pri->x, target_pri->y);
-        return 1;
-    } else {
-        LOGD("[BS %u] no valid patrol target found", unit_id);
-        return 0;
-    }
-}
-
-static unit_id_t unit_chose_secondary_target(ipc_ctx_t *ctx,
-    unit_id_t *detected_id,
-    int count,
-    unit_id_t unit_id,
-    point_t *target_pri,
-    int8_t *have_target_pri,
-    int8_t *have_target_sec
-){
-    float max_multi = 0;
-    unit_id_t max_id = 0;
-    float multi = 0;
-
-    unit_type_t t_type = DUMMY;
-    unit_type_t u_type = DUMMY;
-
-    unit_entity_t *u = ctx->S->units;
-    for (int i = 0; i < count; i++){
-        // if (u[detected_id[i]].faction == u[unit_id].faction) continue;
-        t_type = u[detected_id[i]].type;
-        u_type = u[unit_id].type;
-        multi = damage_multiplyer(u_type, t_type);
-        if (max_multi > multi) continue;
-        max_multi = multi;
-        max_id = detected_id[i];
-    }
-    if (!max_id) return 0;
-    
-    *target_pri = u[max_id].position;
-    *have_target_pri = 1;
-    *have_target_sec = 1;
-
-    return max_id;
-
-}
-
-static int16_t unit_calculate_aproach(weapon_loadout_view_t ba, unit_type_t t_type){
-    int16_t min_range = INT16_MAX;
-    float ac = 0;
-    for (int8_t i = 0; i < ba.count; i++){
-        LOGD("%d", ba.arr[i].range);
-        ac = accuracy_multiplier(ba.arr[i].type, t_type);
-        if (ac > 0 && ac < min_range) 
-            min_range =  ba.arr[i].range;
-    }
-    return min_range-1;
-}
-
 static void patrol_action(ipc_ctx_t *ctx,
     unit_id_t unit_id,
     unit_stats_t *st,
@@ -154,6 +68,8 @@ static void patrol_action(ipc_ctx_t *ctx,
     // Detect units
     unit_id_t detect_id[MAX_UNITS];
     (void)memset(detect_id, 0, sizeof(detect_id));
+    st_points_t out_dmg[st->ba.count];
+    (void)memset(out_dmg, 0, sizeof(out_dmg));
     int count = unit_radar(unit_id, *st, ctx->S->units, detect_id, ctx->S->units[unit_id].faction);
 
     //DEBUG: Print detected units
@@ -210,8 +126,9 @@ static void patrol_action(ipc_ctx_t *ctx,
     }
 
     if (*have_target_sec) {
-        LOGD("[BS %d] Shooting at %d", unit_id, *target_sec);
-        printf("[BS %d] ap=%d Shooting at %d\n", unit_id, aproach, *target_sec);
+        (void)unit_weapon_shoot(ctx, unit_id, st, *target_sec, count, detect_id, out_dmg);
+        LOGD("[BS %d] Sec target %d", unit_id, *target_sec);
+        printf("[BS %d] ap=%d Sec target %d\n", unit_id, aproach, *target_sec);
     }
 
 }
@@ -221,17 +138,20 @@ int main(int argc, char **argv) {
     setpgid(getpid(), 0);
     const char *ftok_path = "./ipc.key";
     int faction = 0, type_i = 0, x = -1, y = -1;
-
-
+    
+    uint32_t req_id_counter = 0;
+    
     int8_t have_target_pri = 0;
     int8_t have_target_sec = 0;
     point_t primary_target = {0};
     unit_id_t secondary_target = 0;
     unit_id_t unit_id = 0;
-
+    int16_t spawn_range = 2;
+    
     unit_type_t type;
     unit_stats_t st;
 
+    ipc_ctx_t ctx;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--ftok") && i + 1 < argc) ftok_path = argv[++i];
@@ -249,24 +169,26 @@ int main(int argc, char **argv) {
     }
 
     // signals
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = on_signal;
-    sigaction(SIGTERM, &sa, NULL);
+    // KILL signal
+    struct sigaction sa1;
+    memset(&sa1, 0, sizeof(sa1));
+    sa1.sa_handler = on_signal;
+    sigaction(SIGTERM, &sa1, NULL);
+
+    // damage payload
+    struct sigaction sa2;
+    memset(&sa2, 0, sizeof(sa2));
+    sa2.sa_handler = on_damage;
+    sigemptyset(&sa2.sa_mask);
+    sa2.sa_flags = 0;
+    sigaction(SIGRTMAX, &sa2, NULL);
+
     // units ignore SIGINT; only CC handles Ctrl+C and sends SIGTERM
     signal(SIGINT, SIG_IGN);
-
-
-    //tbi
-    // struct sigaction sa2;
-    // memset(&sa2, 0, sizeof(sa2));
-    // sa2.sa_handler = NULL;
-    // sigaction(SIGRTMAX, &sa2, NULL);
 
     // RNG per process
     srand((unsigned)(time(NULL) ^ (getpid() << 16)));
 
-    ipc_ctx_t ctx;
     if (ipc_attach(&ctx, ftok_path) == -1) {
         perror("ipc_attach");
         return 1;
@@ -323,8 +245,16 @@ int main(int argc, char **argv) {
             (void)sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1);
             break;
         }
-        
+
+        if (g_damage_pending) {
+            g_damage_pending = 0;
+            LOGD("[BS %d] hp=%d dmg_payload=%ld", unit_id, st.hp, ctx.S->units[unit_id].dmg_payload);
+            compute_dmg_payload(&ctx, unit_id, &st);
+            LOGD("[BS %d] damage computed hp=%d", unit_id, st.hp);
+        }
+
         if (st.hp <= 0) {
+            LOGD("[BS %d] mark as dead", unit_id);
             mark_dead(&ctx, unit_id);
             sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
                 (void)sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1);
@@ -339,6 +269,12 @@ int main(int argc, char **argv) {
             continue;
         }
         ctx.S->last_step_tick[unit_id] = t;
+
+        mq_spawn_rep_t rep;
+        while (mq_try_recv_reply(ctx.q_rep, &rep) == 1) {
+            if (rep.status == 0) st.fb.current++;
+        }
+
         sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
         
         if (!alive) {
@@ -367,7 +303,22 @@ int main(int argc, char **argv) {
             // patrol_action(&ctx);
             break;
         }
+
         point_t pos = ctx.S->units[unit_id].position;
+        if (st.fb.capacity > st.fb.current) {
+            point_t out;
+            radar_pick_random_point_in_circle(pos.x, pos.y, spawn_range, M, N, &out);
+            mq_spawn_req_t req = {
+            .mtype = MSG_SPAWN,
+            .sender = getpid(),
+            .pos = out,
+            .sender_id = unit_id,
+            .utype = st.fb.sq_types[st.fb.current],
+            .req_id = ++req_id_counter
+        };
+        mq_send_spawn(ctx.q_req, &req);
+        }
+
         sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
 
         

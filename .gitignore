@@ -5,6 +5,7 @@ logs/
 *.o
 command_center
 battleship
+squadron
 test
 
 # ===== IPC / runtime files =====

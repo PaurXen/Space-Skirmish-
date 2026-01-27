@@ -15,6 +15,9 @@
 #include "ipc/ipc_context.h"
 #include "ipc/semaphores.h"
 #include "ipc/shared.h"
+#include "ipc/ipc_mesq.h"
+#include "unit_ipc.h"
+#include "unit_logic.h"
 #include "log.h"
 #include "terminal_tee.h"
 
@@ -69,7 +72,7 @@ static void make_run_dir(char *out, size_t out_sz) {
 static uint16_t alloc_unit_id(ipc_ctx_t *ctx) {
     unit_id_t id = 0;
 
-    sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK);
+    // sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK);
 
     for (uint16_t i = 1; i <= MAX_UNITS; i++) {
         if (ctx->S->units[i].alive == 0 &&
@@ -80,7 +83,7 @@ static uint16_t alloc_unit_id(ipc_ctx_t *ctx) {
         }
     }
 
-    sem_unlock(ctx->sem_id, SEM_GLOBAL_LOCK);
+    // sem_unlock(ctx->sem_id, SEM_GLOBAL_LOCK);
     if (id == 0){
         LOGD("No more unit IDs available (MAX_UNITS=%d)", MAX_UNITS);
         fprintf(stderr, "[CC] No more unit IDs available (MAX_UNITS=%d)\n", MAX_UNITS);
@@ -95,40 +98,39 @@ static uint16_t alloc_unit_id(ipc_ctx_t *ctx) {
  *  - increments global unit_count
  * Protected by SEM_GLOBAL_LOCK by caller. */
 static void register_unit(ipc_ctx_t *ctx, unit_id_t unit_id, pid_t pid,
-                          faction_t faction, unit_type_t type, int x, int y)
+                          faction_t faction, unit_type_t type, point_t pos)
 {
-    sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK);
+    // sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK);
 
     ctx->S->units[unit_id].pid = pid;
     ctx->S->units[unit_id].faction = (uint8_t)faction;
     ctx->S->units[unit_id].type = (uint8_t)type;
     ctx->S->units[unit_id].alive = 1;
-    ctx->S->units[unit_id].position.x = (uint16_t)x;
-    ctx->S->units[unit_id].position.y = (uint16_t)y;
+    ctx->S->units[unit_id].position = pos;
 
-    if (x >= 0 && x < M && y >= 0 && y < N) {
-        if (ctx->S->grid[x][y] == 0)
-            ctx->S->grid[x][y] = (unit_id_t)unit_id;
+    if (in_bounds(pos.x, pos.y, M, N)) {
+        if (ctx->S->grid[pos.x][pos.y] == 0)
+            ctx->S->grid[pos.x][pos.y] = (unit_id_t)unit_id;
         else {
             LOGD("Warning: grid[%d][%d] occupied by unit_id=%d",
-                    x, y, (int)ctx->S->grid[x][y]);
+                    pos.x, pos.y, (int)ctx->S->grid[pos.x][pos.y]);
             fprintf(stderr, "[CC] Warning: grid[%d][%d] occupied by unit_id=%d\n",
-                    x, y, (int)ctx->S->grid[x][y]);
+                    pos.x, pos.y, (int)ctx->S->grid[pos.x][pos.y]);
             }
     }
 
     ctx->S->unit_count++;
 
-    sem_unlock(ctx->sem_id, SEM_GLOBAL_LOCK);
+    // sem_unlock(ctx->sem_id, SEM_GLOBAL_LOCK);
 }
 
 /* Spawn a battleship process:
  *  - fork + execl; child execs the battleship binary with args.
  *  - parent registers the unit and returns child pid (or -1 on error).
  */
-static pid_t spawn_battleship(ipc_ctx_t *ctx, const char *exe_path,
+static pid_t spawn_unit(ipc_ctx_t *ctx, const char *exe_path,
                               unit_id_t unit_id, faction_t faction,
-                              unit_type_t type, int x, int y,
+                              unit_type_t type, point_t pos,
                               const char *ftok_path)
 {
     pid_t pid = fork();
@@ -142,8 +144,8 @@ static pid_t spawn_battleship(ipc_ctx_t *ctx, const char *exe_path,
         snprintf(unit_id_s, 16, "%u", unit_id);
         snprintf(faction_s, 16, "%u", faction);
         snprintf(types_s, 16, "%u", type);
-        snprintf(x_s, 16, "%d", x);
-        snprintf(y_s, 16, "%d", y);
+        snprintf(x_s, 16, "%d", pos.x);
+        snprintf(y_s, 16, "%d", pos.y);
 
         execl(exe_path, exe_path,
               "--ftok", ftok_path,
@@ -155,24 +157,60 @@ static pid_t spawn_battleship(ipc_ctx_t *ctx, const char *exe_path,
             NULL);
         _exit(1);
     }
-    register_unit(ctx, unit_id, pid, faction, type, x, y);
+    register_unit(ctx, unit_id, pid, faction, type, pos);
     LOGD("battleship pid=%d id=%d spawned", unit_id, pid);
     return pid;
 }
 
+
+static pid_t spawn_squadron(ipc_ctx_t *ctx,
+    const char *exe_path,
+    unit_type_t u_type,
+    faction_t faction,
+    point_t pos,
+    const char *ftok_path
+){
+    uint16_t unit_id = alloc_unit_id(ctx);
+    if (unit_id == 0) {
+        fprintf(stderr, "[CC] Failed to allocate unit ID for new squadron\n");
+        return -1;
+    }
+
+    pid_t pid = spawn_unit(
+        ctx,
+        exe_path,
+        unit_id,
+        faction,
+        u_type,
+        pos,
+        ftok_path
+    );
+    if (pid == -1) {
+        fprintf(stderr, "[CC] Failed to spawn battleship process for new squadron\n");
+        return -1;
+    }
+
+    return pid;
+}
+
 static void cleanup_dead_units(ipc_ctx_t *ctx) {
+    pid_t killed[MAX_UNITS];
+    int killed_n = 0;
+
     sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK);
 
     for (unit_id_t id = 1; id <= MAX_UNITS; id++) {
-        if (ctx->S->units[id].alive == 0 &&
-            ctx->S->units[id].pid > 0) {
-
+        if (ctx->S->units[id].alive == 0 && ctx->S->units[id].pid > 0) {
             pid_t pid = ctx->S->units[id].pid;
 
             printf("[CC] unit %u marked dead, terminating pid %d\n", id, pid);
             fflush(stdout);
 
-            kill(pid, SIGTERM);
+            (void)kill(pid, SIGTERM);
+
+            if (killed_n < MAX_UNITS) {
+                killed[killed_n++] = pid;
+            }
 
             // mark slot reusable
             ctx->S->units[id].pid = 0;
@@ -186,9 +224,32 @@ static void cleanup_dead_units(ipc_ctx_t *ctx) {
 
     sem_unlock(ctx->sem_id, SEM_GLOBAL_LOCK);
 
-    // reap zombies (non-blocking)
-    while (waitpid(-1, NULL, WNOHANG) > 0) {}
+    // wait/reap ONLY those we just SIGTERM'ed (bounded wait)
+    for (int i = 0; i < killed_n; i++) {
+        int status = 0;
+
+        // wait up to ~500ms total for this pid to exit
+        for (int tries = 0; tries < 50; tries++) {
+            pid_t r = waitpid(killed[i], &status, WNOHANG);
+
+            if (r == killed[i]) {
+                // reaped successfully
+                break;
+            }
+            if (r == 0) {
+                // still running
+                usleep(10 * 1000);
+                continue;
+            }
+            if (r == -1) {
+                if (errno == EINTR) continue;   // retry
+                if (errno == ECHILD) break;     // already reaped / not our child
+                break;
+            }
+        }
+    }
 }
+
 
 static void process_dmg_payload(ipc_ctx_t *ctx) {
     sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK);
@@ -232,12 +293,14 @@ int main(int argc, char **argv) {
     setpgid(0, 0);
     const char *ftok_path = "./ipc.key";
     const char *battleship = "./battleship";
+    const char *squadron = "./squadron";
 
     const useconds_t tick_us = 1000 * 1000; /* tick interval */
 
     for (int i=1; i<argc;i++) {
         if (!strcmp(argv[i], "--ftok") && i+1<argc) ftok_path = argv[++i];
         else if (!strcmp(argv[i], "--battleship") && i+1<argc) battleship = argv[++i];
+        else if (!strcmp(argv[i], "--squadron") && i+1<argc) squadron = argv[++i];
     }
 
     /* Setup signal handlers for clean shutdown */
@@ -268,22 +331,28 @@ int main(int argc, char **argv) {
     log_init("CC", 0);
     atexit(log_close);
 
+    
+    sem_lock(ctx.sem_id, SEM_GLOBAL_LOCK);
+    LOGD("TESTU #1 - allocating units");
     /* Allocate a few unit ids and spawn battleship processes */
     uint16_t u1 = alloc_unit_id(&ctx);
     uint16_t u2 = alloc_unit_id(&ctx);
     uint16_t u3 = alloc_unit_id(&ctx);
     uint16_t u4 = alloc_unit_id(&ctx);
     if (!u1 || !u2 || !u3 || !u4) {
-    // if (!u1 || !u3) {
-        ipc_detach(&ctx);
-        ipc_destroy(&ctx);
-        return 1;
-    }
+        // if (!u1 || !u3) {
+            ipc_detach(&ctx);
+            ipc_destroy(&ctx);
+            return 1;
+        }
+    LOGD("TESTU #2 - spawening units");
+    
+    spawn_unit(&ctx, battleship, u1, FACTION_REPUBLIC, TYPE_DESTROYER, (point_t){5, 5}, ftok_path);
+    spawn_unit(&ctx, battleship, u2, FACTION_REPUBLIC, TYPE_CARRIER,   (point_t){5, N-5}, ftok_path);
+    spawn_unit(&ctx, battleship, u3, FACTION_CIS,      TYPE_DESTROYER, (point_t){M-5, 5}, ftok_path);
+    spawn_unit(&ctx, battleship, u4, FACTION_CIS,      TYPE_CARRIER,   (point_t){M-5, N-5}, ftok_path);
 
-    spawn_battleship(&ctx, battleship, u1, FACTION_REPUBLIC, TYPE_DESTROYER, 5, 10, ftok_path);
-    spawn_battleship(&ctx, battleship, u2, FACTION_REPUBLIC, TYPE_CARRIER,   8, 12, ftok_path);
-    spawn_battleship(&ctx, battleship, u3, FACTION_CIS,      TYPE_DESTROYER, 23, 30, ftok_path);
-    spawn_battleship(&ctx, battleship, u4, FACTION_CIS,      DUMMY,          62, 32, ftok_path);
+    sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
 
     LOGI("[CC] shm_id=%d sem_id=%d spawned 4 battleships. Ctrl+C to stop.",ctx.shm_id, ctx.sem_id);
     printf("[CC] shm_id=%d sem_id=%d spawned 4 battleships. Ctrl+C to stop.\n",ctx.shm_id, ctx.sem_id);
@@ -311,6 +380,41 @@ int main(int argc, char **argv) {
         if (g_stop) break;  // Check immediately after sleep
 
         if (sem_lock_intr(ctx.sem_id, SEM_GLOBAL_LOCK, &g_stop) == -1) break;
+
+        mq_spawn_req_t r;
+        while (mq_try_recv_spawn(ctx.q_req, &r) == 1) {
+
+            // if (tile free && in bounds && squadron limit ok) { spawn; mark occupied; status=0 }
+            // else { status = -1; }
+            int16_t status;
+            pid_t child_pid = -1;
+            if (check_if_occupied(&ctx, r.pos) && in_bounds(r.pos.x, r.pos.y, M, N)) {
+                pid_t child_pid = spawn_squadron(
+                    &ctx,
+                    squadron,
+                    r.utype,
+                    ctx.S->units[r.sender_id].faction,
+                    r.pos,
+                    ftok_path
+                );
+                LOGI("[CC] spawn request at (%d,%d) rejected: occupied or OOB",
+                        r.pos.x, r.pos.y);
+                fprintf(stderr, "[CC] spawn request at (%d,%d) rejected: occupied or OOB\n",
+                        r.pos.x, r.pos.y);
+                status = 0;
+            } else status = 0;
+
+
+            mq_spawn_rep_t rep = {
+                .mtype = r.sender,
+                .req_id = r.req_id,
+                .status = status,
+                .child_pid = (status==0 ? child_pid : -1)
+            };
+            mq_send_reply(ctx.q_rep, &rep);
+
+        }
+
         ctx.S->ticks++;
         uint32_t t =ctx.S->ticks;
 

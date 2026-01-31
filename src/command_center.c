@@ -36,7 +36,7 @@
 static volatile sig_atomic_t g_stop = 0;
 
 /* Signal handler: set cooperative stop flag */
-static void on_signal(int sig) {
+static void on_term(int sig) {
     (void)sig;
     LOGD("g_stop flag raised. (g_stop = 1)");
     g_stop = 1;
@@ -306,7 +306,7 @@ int main(int argc, char **argv) {
     /* Setup signal handlers for clean shutdown */
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = on_signal;
+    sa.sa_handler = on_term;
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
 
@@ -347,9 +347,9 @@ int main(int argc, char **argv) {
         }
     LOGD("TESTU #2 - spawening units");
     
-    spawn_unit(&ctx, battleship, u1, FACTION_REPUBLIC, TYPE_DESTROYER, (point_t){5, 5}, ftok_path);
+    spawn_unit(&ctx, battleship, u1, FACTION_REPUBLIC, TYPE_CARRIER, (point_t){5, 5}, ftok_path);
     spawn_unit(&ctx, battleship, u2, FACTION_REPUBLIC, TYPE_CARRIER,   (point_t){5, N-5}, ftok_path);
-    spawn_unit(&ctx, battleship, u3, FACTION_CIS,      TYPE_DESTROYER, (point_t){M-5, 5}, ftok_path);
+    spawn_unit(&ctx, battleship, u3, FACTION_CIS,      TYPE_CARRIER, (point_t){M-5, 5}, ftok_path);
     spawn_unit(&ctx, battleship, u4, FACTION_CIS,      TYPE_CARRIER,   (point_t){M-5, N-5}, ftok_path);
 
     sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
@@ -384,11 +384,11 @@ int main(int argc, char **argv) {
         mq_spawn_req_t r;
         while (mq_try_recv_spawn(ctx.q_req, &r) == 1) {
 
-            // if (tile free && in bounds && squadron limit ok) { spawn; mark occupied; status=0 }
-            // else { status = -1; }
+            LOGD("[CC] received spawn request from BS %u at (%d,%d) for type %d",
+                    r.sender_id, r.pos.x, r.pos.y, r.utype);
             int16_t status;
             pid_t child_pid = -1;
-            if (check_if_occupied(&ctx, r.pos) && in_bounds(r.pos.x, r.pos.y, M, N)) {
+            if (!check_if_occupied(&ctx, r.pos) && in_bounds(r.pos.x, r.pos.y, M, N)) {
                 pid_t child_pid = spawn_squadron(
                     &ctx,
                     squadron,

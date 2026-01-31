@@ -41,7 +41,7 @@ float accuracy_multiplier(weapon_type_t weapon, unit_type_t target) {
             return 0.75f;
         if (target == TYPE_FIGTER || target == TYPE_BOMBER || target == TYPE_ELITE)
             return 0.25f;
-    } else if (SR_GUN <= weapon && weapon <= LR_GUN) {
+    } else if (LR_GUN <= weapon && weapon <= SR_GUN) {
         if (target == TYPE_FLAGSHIP || target == TYPE_DESTROYER || target == TYPE_CARRIER)
             return 0.0f;
         if (target == TYPE_FIGTER || target == TYPE_BOMBER || target == TYPE_ELITE)
@@ -702,7 +702,7 @@ int16_t unit_calculate_aproach(weapon_loadout_view_t ba, unit_type_t t_type){
     float ac = 0;
     for (int8_t i = 0; i < ba.count; i++){
         ac = accuracy_multiplier(ba.arr[i].type, t_type);
-        if (ac > 0 && ac < min_range) 
+        if (ac > 0 && ba.arr[i].range < min_range) 
             min_range =  ba.arr[i].range;
     }   
     return min_range-1;

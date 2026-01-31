@@ -30,7 +30,7 @@ static void on_damage(int sig) {
     g_damage_pending = 1;
 }
 
-static void on_signal(int sig) {
+static void on_term(int sig) {
     (void)sig;
     LOGD("g_stop flag raised. (g_stop = 1)");
     g_stop = 1;
@@ -62,6 +62,45 @@ static void patrol_action(ipc_ctx_t *ctx,
     point_t *target_pri,
     int8_t *have_target_pri,
     unit_id_t *target_sec,
+    int8_t *have_target_sec,
+    int count,
+    unit_id_t *detect_id,
+    point_t from,
+    int *aproach
+
+)
+{
+    
+
+    // chosing enemy target
+    if (!*have_target_sec && count != 0){
+        *target_sec = unit_chose_secondary_target(ctx, detect_id, count, unit_id,
+            target_pri, have_target_pri, have_target_sec);
+    }
+
+
+
+    // Chosing patrol point
+    if (*have_target_pri && in_disk_i(from.x, from.y, target_pri->x, target_pri->y, *aproach)) *have_target_pri = 0;
+    if (!*have_target_pri) {
+        *have_target_pri = unit_chose_patrol_point(ctx, unit_id, target_pri, *st); 
+    }
+    LOGD("[BS %u] target (%d,%d)", unit_id, target_pri->x, target_pri->y);
+    if (*have_target_sec) {
+        unit_type_t target_type = (unit_type_t)ctx->S->units[*target_sec].type;
+        *aproach = (int)unit_calculate_aproach(st->ba, target_type);
+    }
+
+
+    
+}
+
+static void battleship_action(ipc_ctx_t *ctx,
+    unit_id_t unit_id,
+    unit_stats_t *st,
+    point_t *target_pri,
+    int8_t *have_target_pri,
+    unit_id_t *target_sec,
     int8_t *have_target_sec
 )
 {
@@ -82,29 +121,29 @@ static void patrol_action(ipc_ctx_t *ctx,
     printf("detected %d units\n", count);
     fflush(stdout);
 
-    // chosing enemy target
-    if (!*have_target_sec && count != 0){
-        *target_sec = unit_chose_secondary_target(ctx, detect_id, count, unit_id,
-            target_pri, have_target_pri, have_target_sec);
-    }
-
-
-
-    // Chosing patrol point
     int aproach = 1;
     point_t from = ctx->S->units[unit_id].position;
 
-    if (*have_target_pri && in_disk_i(from.x, from.y, target_pri->x, target_pri->y, aproach)) *have_target_pri = 0;
-    if (!*have_target_pri) {
-        *have_target_pri = unit_chose_patrol_point(ctx, unit_id, target_pri, *st); 
-    }
-    LOGD("[BS %u]target (%d,%d)", unit_id, target_pri->x, target_pri->y);
-    if (*have_target_sec) {
-        aproach = (int)unit_calculate_aproach(st->ba, ctx->S->units[unit_id].type);
-    }
+    switch (order)
+        {
+        case PATROL:
+            patrol_action(ctx, unit_id, st, target_pri, have_target_pri, target_sec, have_target_sec, count, detect_id, from, &aproach);
+            break;
+        case ATTACK:
+            break;
+        case MOVE:
+            break;
+        case MOVE_ATTACK:
+            break;
+        case GUARD:
+            break;
+        default:
+            // patrol_action(&ctx);
+            break;
+        }
 
 
-    // Moving
+        // Moving
     unit_move(ctx, unit_id, from, target_pri, st, aproach);
 
 
@@ -127,12 +166,12 @@ static void patrol_action(ipc_ctx_t *ctx,
 
     if (*have_target_sec) {
         (void)unit_weapon_shoot(ctx, unit_id, st, *target_sec, count, detect_id, out_dmg);
-        LOGD("[BS %d] Sec target %d", unit_id, *target_sec);
+        LOGD("[BS %d] ap=%d Sec target %d", unit_id, aproach, *target_sec);
         printf("[BS %d] ap=%d Sec target %d\n", unit_id, aproach, *target_sec);
     }
 
+        
 }
-
 
 int main(int argc, char **argv) {
     setpgid(getpid(), 0);
@@ -147,6 +186,9 @@ int main(int argc, char **argv) {
     unit_id_t secondary_target = 0;
     unit_id_t unit_id = 0;
     int16_t spawn_range = 2;
+
+    unit_id_t underlings[MAX_UNITS];
+    memset(underlings, 0, sizeof(underlings));
     
     unit_type_t type;
     unit_stats_t st;
@@ -172,7 +214,7 @@ int main(int argc, char **argv) {
     // KILL signal
     struct sigaction sa1;
     memset(&sa1, 0, sizeof(sa1));
-    sa1.sa_handler = on_signal;
+    sa1.sa_handler = on_term;
     sigaction(SIGTERM, &sa1, NULL);
 
     // damage payload
@@ -273,6 +315,7 @@ int main(int argc, char **argv) {
         mq_spawn_rep_t rep;
         while (mq_try_recv_reply(ctx.q_rep, &rep) == 1) {
             if (rep.status == 0) st.fb.current++;
+            // for (int i=0; i<MAX_UNITS;i++);
         }
 
         sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
@@ -286,24 +329,13 @@ int main(int argc, char **argv) {
         LOGD("[BS %u] taking order | tick=%u pos=(%d,%d) order=%d",
              unit_id, t, cp.x, cp.y, order);
         if (sem_lock_intr(ctx.sem_id, SEM_GLOBAL_LOCK, &g_stop) == -1) break;
-        switch (order)
-        {
-        case PATROL:
-            patrol_action(&ctx, unit_id, &st, &primary_target, &have_target_pri, &secondary_target, &have_target_sec);
-            break;
-        case ATTACK:
-            break;
-        case MOVE:
-            break;
-        case MOVE_ATTACK:
-            break;
-        case GUARD:
-            break;
-        default:
-            // patrol_action(&ctx);
-            break;
-        }
+        
+        // perform action based on current order
+        battleship_action(&ctx, unit_id, &st, &primary_target, &have_target_pri, &secondary_target, &have_target_sec);
 
+
+        LOGD("[BS %u] fighter bay: capacity=%d current=%d",
+            unit_id, st.fb.capacity, st.fb.current);
         point_t pos = ctx.S->units[unit_id].position;
         if (st.fb.capacity > st.fb.current) {
             point_t out;
@@ -317,8 +349,9 @@ int main(int argc, char **argv) {
             .req_id = ++req_id_counter
         };
         mq_send_spawn(ctx.q_req, &req);
+        LOGD("[BS %u] request to spawn squadron at (%d,%d)",
+            unit_id, out.x, out.y);
         }
-
         sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
 
         

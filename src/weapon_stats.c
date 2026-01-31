@@ -10,7 +10,7 @@ weapon_stats_t weapon_stats_for_weapon_type(weapon_type_t type) {
         case MR_CANNON: return (weapon_stats_t){ .dmg = 10, .range = 10, .w_target = 0, .type = type };
         case SR_CANNON: return (weapon_stats_t){ .dmg = 10, .range = 5,  .w_target = 0, .type = type };
         case LR_GUN:    return (weapon_stats_t){ .dmg = 10, .range = 15, .w_target = 0, .type = type };
-        case MR_GUN:    return (weapon_stats_t){ .dmg = 10, .range = 15, .w_target = 0, .type = type };
+        case MR_GUN:    return (weapon_stats_t){ .dmg = 10, .range = 10, .w_target = 0, .type = type };
         case SR_GUN:    return (weapon_stats_t){ .dmg = 10, .range = 5,  .w_target = 0, .type = type };
         default:        return (weapon_stats_t){ .dmg = 0,  .range = 0,  .w_target = 0, .type = NONE };
     }

@@ -137,7 +137,7 @@ st_points_t unit_weapon_shoot(ipc_ctx_t *ctx,
         if (weapon.w_target) {
             st_points_t dmg = damage_to_target(&unit, &target, &st->ba.arr[i], accuracy);
             out_dmg[i] = dmg;
-            unit_add_to_dmg_payload(ctx, target_sec, dmg);
+            if (dmg) unit_add_to_dmg_payload(ctx, target_sec, dmg);
         }
     }
     char buf[256];

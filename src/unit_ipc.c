@@ -1,4 +1,5 @@
 #include "unit_ipc.h"
+#include "ipc/ipc_mesq.h"
 
 
 
@@ -39,17 +40,50 @@ void unit_add_to_dmg_payload(
     unit_id_t target_id,
     st_points_t dmg
 ) {
-    // sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK);
-    ctx->S->units[target_id].dmg_payload += dmg;
-
-    // sem_unlock(ctx->sem_id, SEM_GLOBAL_LOCK);
+    if (ctx->S->units[target_id].pid <= 0) return;
+    
+    pid_t target_pid = ctx->S->units[target_id].pid;
+    
+    mq_damage_t dmg_msg = {
+        .mtype = target_pid,
+        .target_id = target_id,
+        .damage = dmg
+    };
+    mq_send_damage(ctx->q_req, &dmg_msg);
+    
+    // Signal the target unit that damage is waiting
+    kill(target_pid, SIGRTMAX);
 }
 
 void compute_dmg_payload(ipc_ctx_t *ctx, unit_id_t unit_id, unit_stats_t *st){
-    st_points_t dmg_payload = ctx->S->units[unit_id].dmg_payload;
-    ctx->S->units[unit_id].dmg_payload = 0;
-    if (st->hp <= dmg_payload) st->hp = 0;
-    st->hp = (st_points_t)st->hp - dmg_payload;
+    st_points_t total_damage = 0;
+    mq_damage_t dmg_msg;
+    int msg_count = 0;
+    
+    // Process all pending damage messages
+    while (mq_try_recv_damage(ctx->q_req, &dmg_msg) == 1) {
+        msg_count++;
+        if (dmg_msg.target_id == unit_id) {
+            total_damage += dmg_msg.damage;
+        } else {
+            // This shouldn't happen - message sent to wrong PID?
+            fprintf(stderr, "[WARN] Unit %u received damage message for unit %u (damage=%ld)\n", 
+                    unit_id, dmg_msg.target_id, dmg_msg.damage);
+        }
+    }
+    
+    if (msg_count > 0 && total_damage == 0) {
+        fprintf(stderr, "[WARN] Unit %u received %d damage messages but total_damage=0\n", 
+                unit_id, msg_count);
+    }
+    
+    if (total_damage > 0) {
+        if (st->hp <= total_damage) {
+            st->hp = 0;
+        } else {
+            st->hp -= total_damage;
+        }
+    }
 }
 
 st_points_t unit_weapon_shoot(ipc_ctx_t *ctx,

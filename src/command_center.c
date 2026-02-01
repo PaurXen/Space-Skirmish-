@@ -36,7 +36,7 @@
 static volatile sig_atomic_t g_stop = 0;
 
 /* Signal handler: set cooperative stop flag */
-static void on_signal(int sig) {
+static void on_term(int sig) {
     (void)sig;
     LOGD("g_stop flag raised. (g_stop = 1)");
     g_stop = 1;
@@ -131,7 +131,7 @@ static void register_unit(ipc_ctx_t *ctx, unit_id_t unit_id, pid_t pid,
 static pid_t spawn_unit(ipc_ctx_t *ctx, const char *exe_path,
                               unit_id_t unit_id, faction_t faction,
                               unit_type_t type, point_t pos,
-                              const char *ftok_path)
+                              const char *ftok_path, unit_id_t commander_id)
 {
     pid_t pid = fork();
     if (pid == -1) {
@@ -140,12 +140,13 @@ static pid_t spawn_unit(ipc_ctx_t *ctx, const char *exe_path,
     }
 
     if (pid == 0) {
-        char unit_id_s[16], faction_s[16], types_s[16], x_s[16], y_s[16];
+        char unit_id_s[16], faction_s[16], types_s[16], x_s[16], y_s[16], commander_s[16];
         snprintf(unit_id_s, 16, "%u", unit_id);
         snprintf(faction_s, 16, "%u", faction);
         snprintf(types_s, 16, "%u", type);
         snprintf(x_s, 16, "%d", pos.x);
         snprintf(y_s, 16, "%d", pos.y);
+        snprintf(commander_s, 16, "%u", commander_id);
 
         execl(exe_path, exe_path,
               "--ftok", ftok_path,
@@ -154,11 +155,12 @@ static pid_t spawn_unit(ipc_ctx_t *ctx, const char *exe_path,
               "--type", types_s,
               "--x", x_s,
               "--y", y_s,
+              "--commander", commander_s,
             NULL);
         _exit(1);
     }
     register_unit(ctx, unit_id, pid, faction, type, pos);
-    LOGD("battleship pid=%d id=%d spawned", unit_id, pid);
+    LOGD("battleship pid=%d id=%d spawned", pid , unit_id);
     return pid;
 }
 
@@ -168,7 +170,9 @@ static pid_t spawn_squadron(ipc_ctx_t *ctx,
     unit_type_t u_type,
     faction_t faction,
     point_t pos,
-    const char *ftok_path
+    const char *ftok_path,
+    unit_id_t commander_id,
+    unit_id_t *out_unit_id
 ){
     uint16_t unit_id = alloc_unit_id(ctx);
     if (unit_id == 0) {
@@ -183,13 +187,15 @@ static pid_t spawn_squadron(ipc_ctx_t *ctx,
         faction,
         u_type,
         pos,
-        ftok_path
+        ftok_path,
+        commander_id
     );
     if (pid == -1) {
         fprintf(stderr, "[CC] Failed to spawn battleship process for new squadron\n");
         return -1;
     }
 
+    if (out_unit_id) *out_unit_id = unit_id;
     return pid;
 }
 
@@ -271,15 +277,23 @@ void print_grid(ipc_ctx_t *ctx) {
     // Print grid
         sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK);
         printf("\n\t");
-        for (int i = 0;i<M;i++) printf("%d",i%10);
+        for (int i = 0; i < M; i++) printf("%d", i % 10);
         printf("\n");
-        for (int i = 0; i<N;i++) {
+        for (int i = 0; i < N; i++) {
             printf("%d\t", i);
-            for (int j =0; j<M; j++) {
+            for (int j = 0; j < M; j++) {
                 int16_t t = ctx->S->grid[j][i];
-                if(t == 0) printf(".");
-                else if (0<t &&  t< MAX_UNITS )  printf("%d", t);
-                else printf(".");
+                if (t == 0) {
+                    printf(".");
+                } else if (0 < t && t < MAX_UNITS)  {
+                    uint8_t faction = ctx->S->units[t].faction;
+                    const char *color = "\x1b[0m"; // default
+                    if (faction == FACTION_REPUBLIC) color = "\x1b[34m"; // blue
+                    else if (faction == FACTION_CIS) color = "\x1b[31m"; // red
+                    printf("%s%d\x1b[0m", color, t);
+                } else {
+                    printf(".");
+                }
             }
             printf("\n");
         }
@@ -295,7 +309,7 @@ int main(int argc, char **argv) {
     const char *battleship = "./battleship";
     const char *squadron = "./squadron";
 
-    const useconds_t tick_us = 1000 * 1000; /* tick interval */
+    const useconds_t tick_us = 1000 * 1000 * 0; /* tick interval */
 
     for (int i=1; i<argc;i++) {
         if (!strcmp(argv[i], "--ftok") && i+1<argc) ftok_path = argv[++i];
@@ -306,7 +320,7 @@ int main(int argc, char **argv) {
     /* Setup signal handlers for clean shutdown */
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = on_signal;
+    sa.sa_handler = on_term;
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
 
@@ -347,10 +361,10 @@ int main(int argc, char **argv) {
         }
     LOGD("TESTU #2 - spawening units");
     
-    spawn_unit(&ctx, battleship, u1, FACTION_REPUBLIC, TYPE_DESTROYER, (point_t){5, 5}, ftok_path);
-    spawn_unit(&ctx, battleship, u2, FACTION_REPUBLIC, TYPE_CARRIER,   (point_t){5, N-5}, ftok_path);
-    spawn_unit(&ctx, battleship, u3, FACTION_CIS,      TYPE_DESTROYER, (point_t){M-5, 5}, ftok_path);
-    spawn_unit(&ctx, battleship, u4, FACTION_CIS,      TYPE_CARRIER,   (point_t){M-5, N-5}, ftok_path);
+    spawn_unit(&ctx, battleship, u1, FACTION_REPUBLIC, TYPE_CARRIER, (point_t){5, 5}, ftok_path, 0);
+    spawn_unit(&ctx, battleship, u2, FACTION_REPUBLIC, TYPE_CARRIER,   (point_t){5, N-5}, ftok_path, 0);
+    spawn_unit(&ctx, battleship, u3, FACTION_CIS,      TYPE_CARRIER, (point_t){M-5, 5}, ftok_path, 0);
+    spawn_unit(&ctx, battleship, u4, FACTION_CIS,      TYPE_CARRIER,   (point_t){M-5, N-5}, ftok_path, 0);
 
     sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
 
@@ -384,32 +398,38 @@ int main(int argc, char **argv) {
         mq_spawn_req_t r;
         while (mq_try_recv_spawn(ctx.q_req, &r) == 1) {
 
-            // if (tile free && in bounds && squadron limit ok) { spawn; mark occupied; status=0 }
-            // else { status = -1; }
+            LOGD("[CC] received spawn request from BS %u at (%d,%d) for type %d",
+                    r.sender_id, r.pos.x, r.pos.y, r.utype);
             int16_t status;
             pid_t child_pid = -1;
-            if (check_if_occupied(&ctx, r.pos) && in_bounds(r.pos.x, r.pos.y, M, N)) {
-                pid_t child_pid = spawn_squadron(
+            unit_id_t child_unit_id = 0;
+            if (!check_if_occupied(&ctx, r.pos) && in_bounds(r.pos.x, r.pos.y, M, N)) {
+                child_pid = spawn_squadron(
                     &ctx,
                     squadron,
                     r.utype,
                     ctx.S->units[r.sender_id].faction,
                     r.pos,
-                    ftok_path
+                    ftok_path,
+                    r.commander_id,
+                    &child_unit_id
                 );
+                status = 0;
+            } else {
                 LOGI("[CC] spawn request at (%d,%d) rejected: occupied or OOB",
                         r.pos.x, r.pos.y);
                 fprintf(stderr, "[CC] spawn request at (%d,%d) rejected: occupied or OOB\n",
                         r.pos.x, r.pos.y);
-                status = 0;
-            } else status = 0;
+                status = -1;
+            }
 
 
             mq_spawn_rep_t rep = {
                 .mtype = r.sender,
                 .req_id = r.req_id,
                 .status = status,
-                .child_pid = (status==0 ? child_pid : -1)
+                .child_pid = (status==0 ? child_pid : -1),
+                .child_unit_id = (status==0 ? child_unit_id : 0)
             };
             mq_send_reply(ctx.q_rep, &rep);
 
@@ -433,7 +453,7 @@ int main(int argc, char **argv) {
                 break;
             }
         }
-                /* wait for all alive units to report done (cooperative interrupt via g_stop) */
+        /* wait for all alive units to report done (cooperative interrupt via g_stop) */
         for (unsigned i=0; i<alive; i++) {
             if (sem_wait_intr(ctx.sem_id, SEM_TICK_DONE, -1, &g_stop) == -1) {
                 break; // Ctrl+C or error
@@ -462,6 +482,17 @@ int main(int argc, char **argv) {
             fflush(stdout);
 
         }
+        int c_r = 0, c_s = 0;
+        for (int id=1; id<=MAX_UNITS; id++) {
+            if (ctx.S->units[id].faction == FACTION_REPUBLIC) c_r++;
+            else if (ctx.S->units[id].faction == FACTION_CIS) c_s++;
+        }
+        if (c_r == 0 || c_s == 0) {
+            LOGI("Faction elimination detected: Republic=%d CIS=%d", c_r, c_s);
+            printf("[CC] Faction elimination detected: Republic=%d CIS=%d\n", c_r, c_s);
+            g_stop = 1;
+        }
+
     }
 
     /* Shutdown sequence:

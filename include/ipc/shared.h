@@ -22,7 +22,7 @@ typedef int32_t st_points_t;
 typedef enum { NONE = 0, LR_CANNON = 1, MR_CANNON = 2, SR_CANNON = 3, LR_GUN = 4, MR_GUN = 5, SR_GUN = 6 } weapon_type_t;
 typedef enum { DO_NOTHING= 0, PATROL = 1, ATTACK = 2, MOVE = 3, MOVE_ATTACK = 4, GUARD = 5 } unit_order_t;
 typedef enum { FACTION_NONE = 0, FACTION_REPUBLIC=1, FACTION_CIS=2 } faction_t;
-typedef enum { DUMMY = 0, TYPE_FLAGSHIP=1, TYPE_DESTROYER=2, TYPE_CARRIER=3, TYPE_FIGTER=4, TYPE_BOMBER=5, TYPE_ELITE=6 } unit_type_t;
+typedef enum { DUMMY = 0, TYPE_FLAGSHIP=1, TYPE_DESTROYER=2, TYPE_CARRIER=3, TYPE_FIGHTER=4, TYPE_BOMBER=5, TYPE_ELITE=6 } unit_type_t;
 
 
 /* point on a grid */

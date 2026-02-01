@@ -5,8 +5,9 @@
 
 #define MQ_KEY_REQ 0x12345
 #define MQ_KEY_REP 0x12346
+#define MQ_ORDER_MTYPE_OFFSET 100000
 
-enum { MSG_SPAWN = 1 };
+enum { MSG_SPAWN = 1, MSG_COMMANDER_REQ = 2, MSG_COMMANDER_REP = 3, MSG_DAMAGE = 4, MSG_ORDER = 5 };
 
 typedef struct {
     long mtype;          // MSG_SPAWN
@@ -15,6 +16,7 @@ typedef struct {
     point_t pos;        // desired spawn coords
     unit_type_t utype;       // unit_type_t to spawn
     uint32_t req_id;     // optional: correlate replies
+    unit_id_t commander_id;  // BS unit_id to assign as commander
 } mq_spawn_req_t;
 
 typedef struct {
@@ -22,10 +24,48 @@ typedef struct {
     uint32_t req_id;
     int16_t status;      // 0 ok, <0 fail
     pid_t child_pid;     // spawned squadron pid on success
+    unit_id_t child_unit_id; // spawned squadron unit_id on success
 } mq_spawn_rep_t;
+
+typedef struct {
+    long mtype;          // MSG_COMMANDER_REQ
+    pid_t sender;        // squadron pid
+    unit_id_t sender_id; // squadron unit_id
+    uint32_t req_id;     // correlation id
+} mq_commander_req_t;
+
+typedef struct {
+    long mtype;          // = sender pid (so squadron can filter)
+    uint32_t req_id;
+    int16_t status;      // 0 accepted, <0 rejected
+    unit_id_t commander_id; // battleship unit_id on success
+} mq_commander_rep_t;
+
+typedef struct {
+    long mtype;          // = target pid
+    unit_id_t target_id; // unit receiving damage
+    st_points_t damage;  // damage amount
+} mq_damage_t;
+
+typedef struct {
+    long mtype;          // = target squadron pid
+    unit_order_t order;  // order type (PATROL, ATTACK, GUARD, etc.)
+    unit_id_t target_id; // target for ATTACK/GUARD orders
+} mq_order_t;
 
 int mq_try_recv_spawn(int qreq, mq_spawn_req_t *out);
 int mq_send_spawn(int qreq, const mq_spawn_req_t *req);
 
 int mq_send_reply(int qrep, const mq_spawn_rep_t *rep);
 int mq_try_recv_reply(int qrep, mq_spawn_rep_t *out);
+
+int mq_try_recv_commander_req(int qreq, mq_commander_req_t *out);
+int mq_send_commander_req(int qreq, const mq_commander_req_t *req);
+int mq_send_commander_reply(int qrep, const mq_commander_rep_t *rep);
+int mq_try_recv_commander_reply(int qrep, mq_commander_rep_t *out);
+
+int mq_send_damage(int qreq, const mq_damage_t *dmg);
+int mq_try_recv_damage(int qreq, mq_damage_t *out);
+
+int mq_send_order(int qreq, const mq_order_t *order);
+int mq_try_recv_order(int qreq, mq_order_t *out);

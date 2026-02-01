@@ -170,6 +170,9 @@ int radar_pick_random_point_in_circle(
 int radar_pick_random_point_on_circle_border(
     point_t pos, int16_t r,
     int grid_w, int grid_h,
+    int8_t unit_size,
+    unit_id_t moving_unit_id,
+    ipc_ctx_t *ctx,
     point_t *out
 ) {
     if (!out) return 0;
@@ -188,7 +191,7 @@ int radar_pick_random_point_on_circle_border(
         return 0;
     }
 
-    // Collect in-bounds border points (absolute positions)
+    // Collect in-bounds border points where unit can actually fit (absolute positions)
     point_t *cands = (point_t*)malloc((size_t)n_off * sizeof(point_t));
     if (!cands) {
         free(offs);
@@ -200,7 +203,11 @@ int radar_pick_random_point_on_circle_border(
         int x = pos.x + offs[i].dx;
         int y = pos.y + offs[i].dy;
         if (!in_bounds(x, y, grid_w, grid_h)) continue;
-        cands[n++] = (point_t){ (int16_t)x, (int16_t)y };
+        // CRITICAL: Check if multi-cell unit can fit at this position
+        // Skip size validation if ctx is NULL (for tests) or size is 1
+        point_t candidate = {(int16_t)x, (int16_t)y};
+        if (ctx && unit_size > 1 && !can_fit_at_position(ctx, candidate, unit_size, moving_unit_id)) continue;
+        cands[n++] = candidate;
     }
 
     free(offs);

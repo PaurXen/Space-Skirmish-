@@ -171,7 +171,7 @@ static void battleship_action(ipc_ctx_t *ctx,
     printf("detected %d units\n", count);
     fflush(stdout);
 
-    int aproach = 1;
+    int aproach = st->si;
     point_t from = ctx->S->units[unit_id].position;
 
     switch (order)

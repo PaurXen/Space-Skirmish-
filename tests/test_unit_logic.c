@@ -130,7 +130,8 @@ static void demo_radar_heat(int w, int h, int cx, int cy, int r, int samples) {
             if (in_bounds_i(x, y, w, h)) hits_in[y*w + x]++;
         }
 
-        if (radar_pick_random_point_on_circle_border((point_t){(int16_t)cx, (int16_t)cy}, (int16_t)r, w, h, &p)) {
+        // Test without size validation (NULL ctx, size=1 works without ctx)
+        if (radar_pick_random_point_on_circle_border((point_t){(int16_t)cx, (int16_t)cy}, (int16_t)r, w, h, 1, 0, NULL, &p)) {
             int x = p.x, y = p.y;
             if (in_bounds_i(x, y, w, h)) hits_bd[y*w + x]++;
         }

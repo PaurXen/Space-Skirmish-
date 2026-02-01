@@ -85,6 +85,9 @@ picks random point on discrete circle border (ring) on the grid
 int radar_pick_random_point_on_circle_border(
     point_t pos, int16_t r,
     int grid_w, int grid_h,
+    int8_t unit_size,
+    unit_id_t moving_unit_id,
+    ipc_ctx_t *ctx,
     point_t *out
 );
 

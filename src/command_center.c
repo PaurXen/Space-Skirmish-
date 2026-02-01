@@ -298,7 +298,7 @@ int main(int argc, char **argv) {
     const char *battleship = "./battleship";
     const char *squadron = "./squadron";
 
-    const useconds_t tick_us = 1000 * 1000; /* tick interval */
+    const useconds_t tick_us = 1000 * 1000 * 0; /* tick interval */
 
     for (int i=1; i<argc;i++) {
         if (!strcmp(argv[i], "--ftok") && i+1<argc) ftok_path = argv[++i];
@@ -497,7 +497,7 @@ int main(int argc, char **argv) {
             if (ctx.S->units[id].faction == FACTION_REPUBLIC) c_r++;
             else if (ctx.S->units[id].faction == FACTION_CIS) c_s++;
         }
-        if (c_r == 0 || c_s == 0) {
+        if ((c_r == 0 || c_s == 0) && 1) {
             LOGI("Faction elimination detected: Republic=%d CIS=%d", c_r, c_s);
             printf("[CC] Faction elimination detected: Republic=%d CIS=%d\n", c_r, c_s);
             g_stop = 1;

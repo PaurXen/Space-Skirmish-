@@ -213,6 +213,9 @@ int8_t unit_chose_patrol_point(ipc_ctx_t *ctx,
             ctx->S->units[unit_id].position,
             st.dr,
             M, N,
+            st.si,
+            unit_id,
+            ctx,
             target_pri)) {
         LOGD("[BS %u] picked new patrol target (%d,%d)",
                 unit_id, target_pri->x, target_pri->y);

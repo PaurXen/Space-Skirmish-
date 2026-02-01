@@ -27,7 +27,7 @@ static const weapon_type_t k_loadout_types[][MAX_WEAPONS] = {
     [TYPE_FLAGSHIP]  = { LR_CANNON, LR_CANNON, MR_GUN,   MR_GUN   },
     [TYPE_DESTROYER] = { LR_CANNON, LR_CANNON, MR_GUN,   NONE     },
     [TYPE_CARRIER]   = { LR_CANNON, MR_GUN,    MR_GUN,   NONE     },
-    [TYPE_FIGTER]    = { SR_GUN,    NONE,      NONE,     NONE     },
+    [TYPE_FIGHTER]    = { SR_GUN,    NONE,      NONE,     NONE     },
     [TYPE_BOMBER]    = { SR_CANNON, NONE,      NONE,     NONE     },
     [TYPE_ELITE]     = { SR_GUN,    NONE,      NONE,     NONE     },
 };
@@ -36,7 +36,7 @@ static const uint8_t k_loadout_counts[] = {
     [TYPE_FLAGSHIP]  = 4,
     [TYPE_DESTROYER] = 3,
     [TYPE_CARRIER]   = 3,
-    [TYPE_FIGTER]    = 1,
+    [TYPE_FIGHTER]    = 1,
     [TYPE_BOMBER]    = 1,
     [TYPE_ELITE]     = 1,
 };

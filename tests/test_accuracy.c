@@ -24,7 +24,7 @@ static const char *unit_name(unit_type_t u) {
         case TYPE_FLAGSHIP: return "FLAGSHIP";
         case TYPE_DESTROYER: return "DESTROYER";
         case TYPE_CARRIER: return "CARRIER";
-        case TYPE_FIGTER: return "FIGTER";
+        case TYPE_FIGHTER: return "FIGTER";
         case TYPE_BOMBER: return "BOMBER";
         case TYPE_ELITE: return "ELITE";
         default: return "UNKNOWN";
@@ -39,7 +39,7 @@ int main(void) {
     weapon_type_t weapons[] = { NONE, LR_CANNON, MR_CANNON, SR_CANNON, LR_GUN, MR_GUN, SR_GUN };
     const int n_weapons = sizeof(weapons) / sizeof(weapons[0]);
 
-    unit_type_t units[] = { DUMMY, TYPE_FLAGSHIP, TYPE_DESTROYER, TYPE_CARRIER, TYPE_FIGTER, TYPE_BOMBER, TYPE_ELITE };
+    unit_type_t units[] = { DUMMY, TYPE_FLAGSHIP, TYPE_DESTROYER, TYPE_CARRIER, TYPE_FIGHTER, TYPE_BOMBER, TYPE_ELITE };
     const int n_units = sizeof(units) / sizeof(units[0]);
 
     printf("Accuracy table (weapon -> target):\n\n");
@@ -69,9 +69,9 @@ int main(void) {
     } tests[] = {
         { NONE, TYPE_FLAGSHIP, 0.0f },
         { LR_CANNON, TYPE_FLAGSHIP, 0.75f },
-        { LR_CANNON, TYPE_FIGTER, 0.25f },
+        { LR_CANNON, TYPE_FIGHTER, 0.25f },
         { SR_GUN, TYPE_FLAGSHIP, 0.0f },
-        { SR_GUN, TYPE_FIGTER, 0.75f },
+        { SR_GUN, TYPE_FIGHTER, 0.75f },
         { MR_GUN, TYPE_BOMBER, 0.75f },
         { SR_CANNON, TYPE_ELITE, 0.25f },
     };

@@ -24,6 +24,8 @@ static volatile sig_atomic_t g_stop = 0;
 
 static volatile sig_atomic_t g_damage_pending = 0;
 
+static volatile unit_id_t underlings[MAX_UNITS];
+
 static void on_damage(int sig) {
     (void)sig;
     LOGD("g_damage_pending flag raised. (g_damage_pending = 1)");
@@ -104,6 +106,40 @@ static void battleship_action(ipc_ctx_t *ctx,
     int8_t *have_target_sec
 )
 {
+    // process squadron commander requests
+    mq_commander_req_t cmd_req;
+    while (mq_try_recv_commander_req(ctx->q_req, &cmd_req) == 1) {
+        mq_commander_rep_t reply;
+        reply.mtype = cmd_req.sender;  // send to squadron's pid
+        reply.req_id = cmd_req.req_id;
+        
+        // check if we can accept this squadron
+        int can_accept = 0;
+        // MABEY TO CHAGE THIS if IDK ¯⁠\⁠_⁠(⁠ツ⁠)⁠_⁠/⁠¯
+        if (1) {
+            // find empty slot in underlings array
+            for (int i = 0; i < MAX_UNITS; i++) {
+                if (underlings[i] == 0) {
+                    underlings[i] = cmd_req.sender_id;
+                    can_accept = 1;
+                    break;
+                }
+            }
+        }
+        
+        if (can_accept) {
+            reply.status = 0;
+            reply.commander_id = unit_id;
+            LOGD("[BS %u] accepted squadron %u as underling", unit_id, cmd_req.sender_id);
+        } else {
+            reply.status = -1;
+            reply.commander_id = 0;
+            LOGD("[BS %u] rejected squadron %u (bay full)", unit_id, cmd_req.sender_id);
+        }
+        
+        mq_send_commander_reply(ctx->q_rep, &reply);
+    }
+
     // Detect units
     unit_id_t detect_id[MAX_UNITS];
     (void)memset(detect_id, 0, sizeof(detect_id));
@@ -170,6 +206,68 @@ static void battleship_action(ipc_ctx_t *ctx,
         printf("[BS %d] ap=%d Sec target %d\n", unit_id, aproach, *target_sec);
     }
 
+    // Send orders to fighter squadrons based on target type
+    unit_type_t target_type = *have_target_sec ? ctx->S->units[*target_sec].type : DUMMY;
+    
+    for (int i = 0; i < MAX_UNITS; i++) {
+        if (underlings[i] == 0) continue;
+        if (!ctx->S->units[underlings[i]].alive) {
+            underlings[i] = 0;
+            continue;
+        }
+        
+        pid_t sq_pid = ctx->S->units[underlings[i]].pid;
+        if (sq_pid <= 0) continue;
+        
+        unit_type_t sq_type = ctx->S->units[underlings[i]].type;
+        mq_order_t order_msg = {0};
+        order_msg.mtype = sq_pid;
+        
+        if (!*have_target_sec) {
+            // No secondary target: all squadrons GUARD the battleship
+            order_msg.order = GUARD;
+            order_msg.target_id = unit_id;
+        } else if (target_type == TYPE_FIGHTER || target_type == TYPE_ELITE) {
+            // Target is FIGHTER or ELITE
+            if (sq_type == TYPE_FIGHTER || sq_type == TYPE_ELITE) {
+                // Fighters and Elites ATTACK the target
+                order_msg.order = ATTACK;
+                order_msg.target_id = *target_sec;
+            } else {
+                // Bombers GUARD the battleship
+                order_msg.order = GUARD;
+                order_msg.target_id = unit_id;
+            }
+        } else if (TYPE_FLAGSHIP <= target_type && target_type <= TYPE_CARRIER) {
+            // Target is BS or FS
+            if (sq_type == TYPE_BOMBER) {
+                // Bombers ATTACK the target
+                order_msg.order = ATTACK;
+                order_msg.target_id = *target_sec;
+            } else {
+                // Fighters and Elites GUARD a bomber (find first bomber)
+                unit_id_t bomber_id = 0;
+                for (int j = 0; j < MAX_UNITS; j++) {
+                    if (underlings[j] != 0 && 
+                        ctx->S->units[underlings[j]].alive && 
+                        ctx->S->units[underlings[j]].type == TYPE_BOMBER) {
+                        bomber_id = underlings[j];
+                        break;
+                    }
+                }
+                order_msg.order = GUARD;
+                order_msg.target_id = bomber_id ? bomber_id : unit_id;
+            }
+        } else {
+            // Default: GUARD the battleship
+            order_msg.order = GUARD;
+            order_msg.target_id = unit_id;
+        }
+        
+        mq_send_order(ctx->q_req, &order_msg);
+        LOGD("[BS %u] sent order %d with target %u to SQ %u", unit_id, order_msg.order, order_msg.target_id, underlings[i]);
+    }
+
         
 }
 
@@ -187,7 +285,6 @@ int main(int argc, char **argv) {
     unit_id_t unit_id = 0;
     int16_t spawn_range = 2;
 
-    unit_id_t underlings[MAX_UNITS];
     memset(underlings, 0, sizeof(underlings));
     
     unit_type_t type;
@@ -202,6 +299,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--type") && i + 1 < argc) type_i = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--x") && i + 1 < argc) x = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--y") && i + 1 < argc) y = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--commander") && i + 1 < argc) ++i; // ignore for battleships
     }
 
     if (unit_id == 0 || unit_id > MAX_UNITS) {
@@ -245,7 +343,6 @@ int main(int argc, char **argv) {
     ctx.S->units[unit_id].alive = 1;
     ctx.S->units[unit_id].position.x = (int16_t)x;
     ctx.S->units[unit_id].position.y = (int16_t)y;
-    ctx.S->units[unit_id].dmg_payload = 0;
     sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
 
     log_init("BS", unit_id);
@@ -290,9 +387,9 @@ int main(int argc, char **argv) {
 
         if (g_damage_pending) {
             g_damage_pending = 0;
-            LOGD("[BS %d] hp=%d dmg_payload=%ld", unit_id, st.hp, ctx.S->units[unit_id].dmg_payload);
+            st_points_t old_hp = st.hp;
             compute_dmg_payload(&ctx, unit_id, &st);
-            LOGD("[BS %d] damage computed hp=%d", unit_id, st.hp);
+            LOGD("[BS %d] damage received: hp %ld -> %ld", unit_id, old_hp, st.hp);
         }
 
         if (st.hp <= 0) {
@@ -314,8 +411,17 @@ int main(int argc, char **argv) {
 
         mq_spawn_rep_t rep;
         while (mq_try_recv_reply(ctx.q_rep, &rep) == 1) {
-            if (rep.status == 0) st.fb.current++;
-            // for (int i=0; i<MAX_UNITS;i++);
+            if (rep.status == 0) {
+                st.fb.current++;
+                // Add spawned squadron to underlings array
+                for (int i = 0; i < MAX_UNITS; i++) {
+                    if (underlings[i] == 0) {
+                        underlings[i] = rep.child_unit_id;
+                        LOGD("[BS %u] added squadron %u to underlings", unit_id, rep.child_unit_id);
+                        break;
+                    }
+                }
+            }
         }
 
         sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
@@ -343,6 +449,8 @@ int main(int argc, char **argv) {
             mq_spawn_req_t req = {
             .mtype = MSG_SPAWN,
             .sender = getpid(),
+            .sender_id = unit_id,
+            .commander_id = unit_id,
             .pos = out,
             .sender_id = unit_id,
             .utype = st.fb.sq_types[st.fb.current],

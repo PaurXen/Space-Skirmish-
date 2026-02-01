@@ -18,6 +18,8 @@
 #include "ipc/ipc_mesq.h"
 #include "unit_ipc.h"
 #include "unit_logic.h"
+#include "unit_stats.h"
+#include "unit_size.h"
 #include "log.h"
 #include "terminal_tee.h"
 
@@ -108,16 +110,9 @@ static void register_unit(ipc_ctx_t *ctx, unit_id_t unit_id, pid_t pid,
     ctx->S->units[unit_id].alive = 1;
     ctx->S->units[unit_id].position = pos;
 
-    if (in_bounds(pos.x, pos.y, M, N)) {
-        if (ctx->S->grid[pos.x][pos.y] == 0)
-            ctx->S->grid[pos.x][pos.y] = (unit_id_t)unit_id;
-        else {
-            LOGD("Warning: grid[%d][%d] occupied by unit_id=%d",
-                    pos.x, pos.y, (int)ctx->S->grid[pos.x][pos.y]);
-            fprintf(stderr, "[CC] Warning: grid[%d][%d] occupied by unit_id=%d\n",
-                    pos.x, pos.y, (int)ctx->S->grid[pos.x][pos.y]);
-            }
-    }
+    // Place unit on grid using size mechanic
+    unit_stats_t stats = unit_stats_for_type(type);
+    place_unit_on_grid(ctx, unit_id, pos, stats.si);
 
     ctx->S->unit_count++;
 
@@ -267,23 +262,6 @@ static void cleanup_dead_units(ipc_ctx_t *ctx) {
     }
 }
 
-
-// static void process_dmg_payload(ipc_ctx_t *ctx) {
-//     sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK);
-//     for (unit_id_t id = 1; id <= MAX_UNITS; id++) {
-//         if (ctx->S->units[id].alive == 1
-//             && ctx->S->units[id].pid > 0
-//             && ctx->S->units[id].dmg_payload != 0) {
-            
-//                 pid_t pid = ctx->S->units[id].pid;
-
-//                 kill(pid, SIGRTMAX);
-//         }
-//     }
-//     sem_unlock(ctx->sem_id,SEM_GLOBAL_LOCK);
-// }
-
-
 void print_grid(ipc_ctx_t *ctx) {
     // Print grid
         sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK);
@@ -320,7 +298,7 @@ int main(int argc, char **argv) {
     const char *battleship = "./battleship";
     const char *squadron = "./squadron";
 
-    const useconds_t tick_us = 1000 * 1000 * 0; /* tick interval */
+    const useconds_t tick_us = 1000 * 1000; /* tick interval */
 
     for (int i=1; i<argc;i++) {
         if (!strcmp(argv[i], "--ftok") && i+1<argc) ftok_path = argv[++i];
@@ -426,7 +404,11 @@ int main(int argc, char **argv) {
             int16_t status;
             pid_t child_pid = -1;
             unit_id_t child_unit_id = 0;
-            if (!check_if_occupied(&ctx, r.pos) && in_bounds(r.pos.x, r.pos.y, M, N)) {
+            
+            // Check if the unit can fit at the requested position
+            unit_stats_t spawn_stats = unit_stats_for_type((unit_type_t)r.utype);
+            if (can_fit_at_position(&ctx, r.pos, spawn_stats.si, 0) && 
+                in_bounds(r.pos.x, r.pos.y, M, N)) {
                 child_pid = spawn_squadron(
                     &ctx,
                     squadron,
@@ -439,9 +421,9 @@ int main(int argc, char **argv) {
                 );
                 status = 0;
             } else {
-                LOGI("[CC] spawn request at (%d,%d) rejected: occupied or OOB",
+                LOGI("[CC] spawn request at (%d,%d) rejected: insufficient space or OOB",
                         r.pos.x, r.pos.y);
-                fprintf(stderr, "[CC] spawn request at (%d,%d) rejected: occupied or OOB\n",
+                fprintf(stderr, "[CC] spawn request at (%d,%d) rejected: insufficient space or OOB\n",
                         r.pos.x, r.pos.y);
                 status = -1;
             }
@@ -495,7 +477,6 @@ int main(int argc, char **argv) {
 
         print_grid(&ctx);
 
-        // process_dmg_payload(&ctx);
         cleanup_dead_units(&ctx);
 
         

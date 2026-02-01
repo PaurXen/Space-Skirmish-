@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <time.h>
 #include <errno.h>
+#include <math.h>
 
 #include "ipc/ipc_context.h"
 #include "ipc/semaphores.h"
@@ -101,7 +102,7 @@ static void attack_action(ipc_ctx_t *ctx,
 )
 {
     if (ctx->S->units[*target_sec].alive) {
-        *target_pri = ctx->S->units[*target_sec].position;
+        *target_pri = get_target_position(ctx, unit_id, *target_sec);
         *have_target_pri = 1;
     }
     if (*have_target_sec) {
@@ -133,14 +134,39 @@ static void guard_action(ipc_ctx_t *ctx,
     point_t ter_pos = ctx->S->units[*target_ter].position;
     point_t my_pos = ctx->S->units[unit_id].position;
     
-    // Calculate guard range (1/3 to 2/3 of DR, using middle)
-    int16_t guard_range = st->dr / 2;
+    // Calculate guard range: keep distance so guarded unit can move without collision
+    // Distance = guarded_unit.speed + guarded_unit.size - 1
+    int16_t guard_range = t_st.sp + t_st.si - 1;
+    if (guard_range < 3) guard_range = 3; // minimum guard distance
     int32_t dist_to_ter = dist2(my_pos, ter_pos);
     
-    // Set primary target to guard position
-    *target_pri = ter_pos;
-    *have_target_pri = 1;
-    *aproach = (dist_to_ter > guard_range * guard_range) ? guard_range : 1;
+    // If too close to guarded unit, move away; otherwise move towards guard position
+    if (dist_to_ter < guard_range * guard_range) {
+        // Too close - move away from guarded unit
+        int16_t dx = my_pos.x - ter_pos.x;
+        int16_t dy = my_pos.y - ter_pos.y;
+        
+        // Calculate unit vector away from target (or default direction if on same spot)
+        if (dx == 0 && dy == 0) {
+            dx = 1; dy = 0; // default direction if spawned at exact same position
+        }
+        
+        // Move away to guard_range distance
+        int dist = (int)sqrt((double)dist_to_ter);
+        if (dist == 0) dist = 1;
+        
+        *target_pri = (point_t){
+            ter_pos.x + (dx * guard_range) / dist,
+            ter_pos.y + (dy * guard_range) / dist
+        };
+        *have_target_pri = 1;
+        *aproach = 0; // move as close as possible to the away-point
+    } else {
+        // At good distance or too far - orbit around guarded unit at guard_range
+        *target_pri = ter_pos;
+        *have_target_pri = 1;
+        *aproach = guard_range;
+    }
     
     // Detect enemies in area around tertiary target
     unit_id_t detect_id[MAX_UNITS];

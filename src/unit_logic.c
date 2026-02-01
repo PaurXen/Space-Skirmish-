@@ -5,6 +5,7 @@
 #include "unit_logic.h"
 #include "weapon_stats.h"
 #include "unit_ipc.h"
+#include "unit_size.h"
 #include "ipc/shared.h"
 
 typedef struct { int16_t dx, dy; } offset_t;
@@ -438,7 +439,10 @@ static point_t bfs_best_reachable_in_sp_disk_prefer_border(
     point_t goal,
     int16_t sp,
     int w, int h,
-    const unit_id_t grid[w][h]
+    const unit_id_t grid[w][h],
+    unit_id_t moving_unit_id,
+    st_points_t unit_size,
+    ipc_ctx_t *ctx
 ) {
     point_t out = from;
     if (sp <= 0) return out;
@@ -483,8 +487,10 @@ static point_t bfs_best_reachable_in_sp_disk_prefer_border(
 
         // Evaluate candidate (skip blocked; start can be allowed)
         if (!(x == sx && y == sy)) {
-            if (grid[x][y] != 0) {
-                // blocked cell can't be occupied
+            // For multi-cell units, check if entire unit footprint can fit
+            point_t p = { (int16_t)x, (int16_t)y };
+            if (ctx && !can_fit_at_position(ctx, p, unit_size, moving_unit_id)) {
+                // Can't fit here (blocked or out of bounds)
                 goto expand_neighbors;
             }
         }
@@ -519,8 +525,8 @@ expand_neighbors:
             // Keep BFS limited to disk early
             if (!in_disk_i(xx, yy, sx, sy, sp)) continue;
 
-            // Don’t enqueue blocked cells (except allow start already handled)
-            if (grid[xx][yy] != 0) continue;
+            // Don't enqueue blocked cells, but allow cells occupied by the moving unit
+            if (grid[xx][yy] != 0 && grid[xx][yy] != moving_unit_id) continue;
 
             int nidx = yy * w + xx;
             if (vis[nidx]) continue;
@@ -606,6 +612,9 @@ int unit_next_step_towards(
     int approach,
     int grid_w, int grid_h,
     const unit_id_t grid[grid_w][grid_h],
+    unit_id_t moving_unit_id,
+    st_points_t unit_size,
+    ipc_ctx_t *ctx,
     point_t *out_next
 ) {
     // Backwards-compatible behavior: if caller does not pass DR,
@@ -615,6 +624,9 @@ int unit_next_step_towards(
         sp, sp,
         approach,
         grid_w, grid_h, grid,
+        moving_unit_id,
+        unit_size,
+        ctx,
         out_next
     );
 }
@@ -627,6 +639,9 @@ int unit_next_step_towards_dr(
     int approach,
     int grid_w, int grid_h,
     const unit_id_t grid[grid_w][grid_h],
+    unit_id_t moving_unit_id,
+    st_points_t unit_size,
+    ipc_ctx_t *ctx,
     point_t *out_next
 ) {
     if (!out_next) return 0;
@@ -638,7 +653,8 @@ int unit_next_step_towards_dr(
 
     // Already within approach radius (no move needed)
     const int approach2 = approach * approach;
-    if (dist2(from, target) <= approach2) {
+    int32_t curr_dist2 = dist2(from, target);
+    if (curr_dist2 <= approach2) {
         *out_next = from;
         return 1;
     }
@@ -652,9 +668,8 @@ int unit_next_step_towards_dr(
 
     // 2a) If goal is already reachable within SP, go directly to goal
     if (in_disk_i(goal.x, goal.y, from.x, from.y, sp)) {
-        // goal must be in bounds and not blocked
-        if (in_bounds(goal.x, goal.y, grid_w, grid_h) &&
-            grid[goal.x][goal.y] == 0) {
+        // Check if unit can fit at goal position (accounts for multi-cell units)
+        if (ctx && can_fit_at_position(ctx, goal, unit_size, moving_unit_id)) {
             *out_next = goal;
             return 1;
         }
@@ -663,8 +678,9 @@ int unit_next_step_towards_dr(
     // 2b) Otherwise, choose best reachable SP position (prefer border)
     point_t step = bfs_best_reachable_in_sp_disk_prefer_border(
         from, goal, sp,
-        grid_w, grid_h, grid
+        grid_w, grid_h, grid, moving_unit_id, unit_size, ctx
     );
+    
     *out_next = step;
     return 1;
 }
@@ -681,9 +697,14 @@ int unit_radar(
 ){
     int count = 0;
     point_t from = units[unit_id].position;
+    
+    /* Track which unit IDs we've already added to avoid duplicates
+     * (large units occupy multiple grid cells) */
+    int8_t seen[MAX_UNITS + 1] = {0};
 
     for (unit_id_t id = 1; id <= MAX_UNITS; id++){
         if (id == unit_id) continue;
+        if (seen[id]) continue; // already added
         if (faction != FACTION_NONE && units[id].faction == faction) continue;
         if (!units[id].pid) continue;
         if (!units[id].alive) continue;
@@ -692,6 +713,7 @@ int unit_radar(
 
         if (in_disk_i(pos.x, pos.y, from.x, from.y, u_st.dr)){
             out[count++] = id;
+            seen[id] = 1;
         }
     }
     return count;

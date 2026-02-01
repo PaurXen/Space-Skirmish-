@@ -94,7 +94,11 @@ static void patrol_action(ipc_ctx_t *ctx,
             target_pri, have_target_pri, have_target_sec);
     }
 
-
+    // Determine approach distance FIRST (before checking if we've reached target)
+    if (*have_target_sec) {
+        unit_type_t target_type = (unit_type_t)ctx->S->units[*target_sec].type;
+        *aproach = (int)unit_calculate_aproach(st->ba, target_type);
+    }
 
     // Chosing patrol point
     if (*have_target_pri && in_disk_i(from.x, from.y, target_pri->x, target_pri->y, *aproach)) *have_target_pri = 0;
@@ -102,10 +106,6 @@ static void patrol_action(ipc_ctx_t *ctx,
         *have_target_pri = unit_chose_patrol_point(ctx, unit_id, target_pri, *st); 
     }
     LOGD("[BS %u] target (%d,%d)", unit_id, target_pri->x, target_pri->y);
-    if (*have_target_sec) {
-        unit_type_t target_type = (unit_type_t)ctx->S->units[*target_sec].type;
-        *aproach = (int)unit_calculate_aproach(st->ba, target_type);
-    }
 
 
     
@@ -297,7 +297,6 @@ int main(int argc, char **argv) {
     point_t primary_target = {0};
     unit_id_t secondary_target = 0;
     unit_id_t unit_id = 0;
-    int16_t spawn_range = 2;
 
     memset(underlings, 0, sizeof(underlings));
     
@@ -469,6 +468,11 @@ int main(int argc, char **argv) {
             unit_id, st.fb.capacity, st.fb.current);
         point_t pos = ctx.S->units[unit_id].position;
         if (st.fb.capacity > st.fb.current) {
+            // Calculate spawn range based on unit sizes:
+            // Need to clear battleship's size plus squadron's size plus buffer
+            unit_stats_t sq_stats = unit_stats_for_type(st.fb.sq_types[st.fb.current]);
+            int16_t spawn_range = st.si + sq_stats.si + 1;
+            
             point_t out;
             radar_pick_random_point_in_circle(pos.x, pos.y, spawn_range, M, N, &out);
             mq_spawn_req_t req = {

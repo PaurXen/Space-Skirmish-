@@ -18,6 +18,8 @@
 #include "ipc/ipc_mesq.h"
 #include "unit_ipc.h"
 #include "unit_logic.h"
+#include "unit_stats.h"
+#include "unit_size.h"
 #include "log.h"
 #include "terminal_tee.h"
 
@@ -108,16 +110,9 @@ static void register_unit(ipc_ctx_t *ctx, unit_id_t unit_id, pid_t pid,
     ctx->S->units[unit_id].alive = 1;
     ctx->S->units[unit_id].position = pos;
 
-    if (in_bounds(pos.x, pos.y, M, N)) {
-        if (ctx->S->grid[pos.x][pos.y] == 0)
-            ctx->S->grid[pos.x][pos.y] = (unit_id_t)unit_id;
-        else {
-            LOGD("Warning: grid[%d][%d] occupied by unit_id=%d",
-                    pos.x, pos.y, (int)ctx->S->grid[pos.x][pos.y]);
-            fprintf(stderr, "[CC] Warning: grid[%d][%d] occupied by unit_id=%d\n",
-                    pos.x, pos.y, (int)ctx->S->grid[pos.x][pos.y]);
-            }
-    }
+    // Place unit on grid using size mechanic
+    unit_stats_t stats = unit_stats_for_type(type);
+    place_unit_on_grid(ctx, unit_id, pos, stats.si);
 
     ctx->S->unit_count++;
 
@@ -135,6 +130,7 @@ static pid_t spawn_unit(ipc_ctx_t *ctx, const char *exe_path,
 {
     pid_t pid = fork();
     if (pid == -1) {
+        LOGE("[CC] fork failed for unit_id=%u: %s", unit_id, strerror(errno));
         perror("fork");
         return -1;
     }
@@ -157,10 +153,14 @@ static pid_t spawn_unit(ipc_ctx_t *ctx, const char *exe_path,
               "--y", y_s,
               "--commander", commander_s,
             NULL);
+        /* execl only returns on error */
+        fprintf(stderr, "[CC child] execl(%s) failed: %s\n", exe_path, strerror(errno));
+        perror("execl");
         _exit(1);
     }
     register_unit(ctx, unit_id, pid, faction, type, pos);
-    LOGD("battleship pid=%d id=%d spawned", pid , unit_id);
+    LOGD("[CC] spawned unit_id=%u pid=%d type=%u faction=%u at (%d,%d)",
+            unit_id, (int)pid, (unsigned)type, (unsigned)faction, pos.x, pos.y);
     return pid;
 }
 
@@ -176,6 +176,7 @@ static pid_t spawn_squadron(ipc_ctx_t *ctx,
 ){
     uint16_t unit_id = alloc_unit_id(ctx);
     if (unit_id == 0) {
+        LOGE("[CC] Failed to allocate unit ID for new squadron");
         fprintf(stderr, "[CC] Failed to allocate unit ID for new squadron\n");
         return -1;
     }
@@ -191,7 +192,12 @@ static pid_t spawn_squadron(ipc_ctx_t *ctx,
         commander_id
     );
     if (pid == -1) {
-        fprintf(stderr, "[CC] Failed to spawn battleship process for new squadron\n");
+        LOGE("[CC] Failed to spawn squadron process for unit %u", unit_id);
+        fprintf(stderr, "[CC] Failed to spawn squadron process for unit %u\n", unit_id);
+        /* Free the allocated unit_id since spawn failed */
+        ctx->S->units[unit_id].alive = 0;
+        ctx->S->units[unit_id].pid = 0;
+        if (ctx->S->unit_count > 0) ctx->S->unit_count--;
         return -1;
     }
 
@@ -256,23 +262,6 @@ static void cleanup_dead_units(ipc_ctx_t *ctx) {
     }
 }
 
-
-static void process_dmg_payload(ipc_ctx_t *ctx) {
-    sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK);
-    for (unit_id_t id = 1; id <= MAX_UNITS; id++) {
-        if (ctx->S->units[id].alive == 1
-            && ctx->S->units[id].pid > 0
-            && ctx->S->units[id].dmg_payload != 0) {
-            
-                pid_t pid = ctx->S->units[id].pid;
-
-                kill(pid, SIGRTMAX);
-        }
-    }
-    sem_unlock(ctx->sem_id,SEM_GLOBAL_LOCK);
-}
-
-
 void print_grid(ipc_ctx_t *ctx) {
     // Print grid
         sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK);
@@ -326,6 +315,7 @@ int main(int argc, char **argv) {
 
     ipc_ctx_t ctx;
     if (ipc_create(&ctx, ftok_path) == -1) {
+        fprintf(stderr, "[CC] ipc_create failed: %s\n", strerror(errno));
         perror("ipc_create");
         return 1;
     }
@@ -342,11 +332,19 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Failed to start terminal tee\n");
     }
 
-    log_init("CC", 0);
+    if (log_init("CC", 0) == -1) {
+        fprintf(stderr, "[CC] log_init failed, continuing without logs\n");
+    }
     atexit(log_close);
 
     
-    sem_lock(ctx.sem_id, SEM_GLOBAL_LOCK);
+    if (sem_lock(ctx.sem_id, SEM_GLOBAL_LOCK) == -1) {
+        fprintf(stderr, "[CC] failed to acquire initial lock: %s\n", strerror(errno));
+        perror("sem_lock");
+        ipc_detach(&ctx);
+        ipc_destroy(&ctx);
+        return 1;
+    }
     LOGD("TESTU #1 - allocating units");
     /* Allocate a few unit ids and spawn battleship processes */
     uint16_t u1 = alloc_unit_id(&ctx);
@@ -355,6 +353,9 @@ int main(int argc, char **argv) {
     uint16_t u4 = alloc_unit_id(&ctx);
     if (!u1 || !u2 || !u3 || !u4) {
         // if (!u1 || !u3) {
+            LOGE("[CC] Failed to allocate units: u1=%u u2=%u u3=%u u4=%u", u1, u2, u3, u4);
+            fprintf(stderr, "[CC] Failed to allocate units\n");
+            sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
             ipc_detach(&ctx);
             ipc_destroy(&ctx);
             return 1;
@@ -403,7 +404,11 @@ int main(int argc, char **argv) {
             int16_t status;
             pid_t child_pid = -1;
             unit_id_t child_unit_id = 0;
-            if (!check_if_occupied(&ctx, r.pos) && in_bounds(r.pos.x, r.pos.y, M, N)) {
+            
+            // Check if the unit can fit at the requested position
+            unit_stats_t spawn_stats = unit_stats_for_type((unit_type_t)r.utype);
+            if (can_fit_at_position(&ctx, r.pos, spawn_stats.si, 0) && 
+                in_bounds(r.pos.x, r.pos.y, M, N)) {
                 child_pid = spawn_squadron(
                     &ctx,
                     squadron,
@@ -416,9 +421,9 @@ int main(int argc, char **argv) {
                 );
                 status = 0;
             } else {
-                LOGI("[CC] spawn request at (%d,%d) rejected: occupied or OOB",
+                LOGI("[CC] spawn request at (%d,%d) rejected: insufficient space or OOB",
                         r.pos.x, r.pos.y);
-                fprintf(stderr, "[CC] spawn request at (%d,%d) rejected: occupied or OOB\n",
+                fprintf(stderr, "[CC] spawn request at (%d,%d) rejected: insufficient space or OOB\n",
                         r.pos.x, r.pos.y);
                 status = -1;
             }
@@ -448,6 +453,7 @@ int main(int argc, char **argv) {
                 /* release exactly one start permit per alive unit */
         for (unsigned i=0; i<alive; i++) {
             if (sem_post_retry(ctx.sem_id, SEM_TICK_START, +1) == -1) {
+                LOGE("[CC] sem_post_retry(TICK_START) failed: %s", strerror(errno));
                 perror("sem_post_retry(TICK_START)");
                 g_stop = 1;
                 break;
@@ -456,6 +462,11 @@ int main(int argc, char **argv) {
         /* wait for all alive units to report done (cooperative interrupt via g_stop) */
         for (unsigned i=0; i<alive; i++) {
             if (sem_wait_intr(ctx.sem_id, SEM_TICK_DONE, -1, &g_stop) == -1) {
+                if (g_stop) {
+                    LOGW("[CC] sem_wait_intr interrupted by stop signal");
+                } else {
+                    LOGE("[CC] sem_wait_intr failed: %s", strerror(errno));
+                }
                 break; // Ctrl+C or error
             }
             // printf("[CC] got\n");
@@ -466,7 +477,6 @@ int main(int argc, char **argv) {
 
         print_grid(&ctx);
 
-        process_dmg_payload(&ctx);
         cleanup_dead_units(&ctx);
 
         
@@ -487,7 +497,7 @@ int main(int argc, char **argv) {
             if (ctx.S->units[id].faction == FACTION_REPUBLIC) c_r++;
             else if (ctx.S->units[id].faction == FACTION_CIS) c_s++;
         }
-        if (c_r == 0 || c_s == 0) {
+        if ((c_r == 0 || c_s == 0) && 1) {
             LOGI("Faction elimination detected: Republic=%d CIS=%d", c_r, c_s);
             printf("[CC] Faction elimination detected: Republic=%d CIS=%d\n", c_r, c_s);
             g_stop = 1;
@@ -502,20 +512,27 @@ int main(int argc, char **argv) {
      */
     LOGW("stopping: sending SIGTERM to alive units...");
     printf("[CC] stopping: sending SIGTERM to alive units...\n");
-    
+    fflush(stdout);
 
     /* Try to get lock with interruptible version */
     if (sem_lock_intr(ctx.sem_id, SEM_GLOBAL_LOCK, &g_stop) == -1) {
         /* Couldn't get lock, just send signals without it */
+        LOGW("[CC] Could not acquire lock for shutdown, sending SIGTERM anyway");
         for (int id = 1; id <= MAX_UNITS; id++) {
             pid_t pid = ctx.S->units[id].pid;
-            if (pid > 1) kill(pid, SIGTERM);
+            if (pid > 1) {
+                LOGD("[CC] Sending SIGTERM to unit %d (pid %d)", id, pid);
+                kill(pid, SIGTERM);
+            }
         }
     } else {
         /* We got the lock */
         for (int id = 1; id <= MAX_UNITS; id++) {
             pid_t pid = ctx.S->units[id].pid;
-            if (pid > 1) kill(pid, SIGTERM);
+            if (pid > 1) {
+                LOGD("[CC] Sending SIGTERM to unit %d (pid %d)", id, pid);
+                kill(pid, SIGTERM);
+            }
         }
         sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
     }
@@ -523,32 +540,56 @@ int main(int argc, char **argv) {
     int status;
     pid_t pid;
     int waited = 0;
+    int timeout_count = 0;
+    const int MAX_WAIT_ATTEMPTS = 100; /* Prevent infinite loop */
 
     for (;;) {
         pid = waitpid(-1, &status, 0);   // BLOCK until a child exits
         if (pid > 0) {
             waited++;
-            printf("[CC] reaped child %d\n", pid);
+            if (WIFEXITED(status)) {
+                LOGD("[CC] reaped child %d, exit status %d", pid, WEXITSTATUS(status));
+                printf("[CC] reaped child %d, exit status %d\n", pid, WEXITSTATUS(status));
+            } else if (WIFSIGNALED(status)) {
+                LOGD("[CC] reaped child %d, killed by signal %d", pid, WTERMSIG(status));
+                printf("[CC] reaped child %d, killed by signal %d\n", pid, WTERMSIG(status));
+            } else {
+                printf("[CC] reaped child %d\n", pid);
+            }
             continue;
         }
 
         if (pid == -1) {
             if (errno == EINTR) {
+                timeout_count++;
+                if (timeout_count > MAX_WAIT_ATTEMPTS) {
+                    LOGW("[CC] waitpid interrupted too many times, giving up");
+                    break;
+                }
                 continue;               // interrupted by signal -> retry
             }
             if (errno == ECHILD) {
+                LOGD("[CC] no more children to reap");
                 break;                  // no more children
             }
+            LOGE("[CC] waitpid failed: %s", strerror(errno));
             perror("[CC] waitpid");
             break;
         }
     }
 
-    LOGD("[CC] reaped %d children\n", waited);
+    LOGI("[CC] reaped %d children total", waited);
+    printf("[CC] reaped %d children total\n", waited);
+    fflush(stdout);
 
     /* cleanup IPC and exit */
-    ipc_detach(&ctx);
-    ipc_destroy(&ctx);
+    LOGD("[CC] Detaching and destroying IPC objects");
+    if (ipc_detach(&ctx) == -1) {
+        LOGE("[CC] ipc_detach failed: %s", strerror(errno));
+    }
+    if (ipc_destroy(&ctx) == -1) {
+        LOGE("[CC] ipc_destroy failed: %s", strerror(errno));
+    }
 
     printf("[CC] exit.\n");
     return 0;

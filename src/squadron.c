@@ -6,6 +6,8 @@
 #include <signal.h>
 #include <unistd.h>
 #include <time.h>
+#include <errno.h>
+#include <math.h>
 
 #include "ipc/ipc_context.h"
 #include "ipc/semaphores.h"
@@ -25,6 +27,19 @@ static volatile unit_id_t commander = 0;
 static volatile sig_atomic_t g_stop = 0;
 
 static volatile sig_atomic_t g_damage_pending = 0;
+
+static ipc_ctx_t *g_ctx = NULL;
+static unit_id_t g_unit_id = 0;
+
+/* Cleanup function to detach IPC and mark unit dead on error */
+static void cleanup_and_exit(int exit_code) {
+    if (g_ctx && g_unit_id > 0) {
+        LOGW("[SQ %u] cleanup_and_exit called, marking dead", g_unit_id);
+        mark_dead(g_ctx, g_unit_id);
+        ipc_detach(g_ctx);
+    }
+    exit(exit_code);
+}
 
 static void on_term(int sig) {
     (void)sig;
@@ -87,7 +102,7 @@ static void attack_action(ipc_ctx_t *ctx,
 )
 {
     if (ctx->S->units[*target_sec].alive) {
-        *target_pri = ctx->S->units[*target_sec].position;
+        *target_pri = get_target_position(ctx, unit_id, *target_sec);
         *have_target_pri = 1;
     }
     if (*have_target_sec) {
@@ -119,14 +134,39 @@ static void guard_action(ipc_ctx_t *ctx,
     point_t ter_pos = ctx->S->units[*target_ter].position;
     point_t my_pos = ctx->S->units[unit_id].position;
     
-    // Calculate guard range (1/3 to 2/3 of DR, using middle)
-    int16_t guard_range = st->dr / 2;
+    // Calculate guard range: keep distance so guarded unit can move without collision
+    // Distance = guarded_unit.speed + guarded_unit.size - 1
+    int16_t guard_range = t_st.sp + t_st.si - 1;
+    if (guard_range < 3) guard_range = 3; // minimum guard distance
     int32_t dist_to_ter = dist2(my_pos, ter_pos);
     
-    // Set primary target to guard position
-    *target_pri = ter_pos;
-    *have_target_pri = 1;
-    *aproach = (dist_to_ter > guard_range * guard_range) ? guard_range : 1;
+    // If too close to guarded unit, move away; otherwise move towards guard position
+    if (dist_to_ter < guard_range * guard_range) {
+        // Too close - move away from guarded unit
+        int16_t dx = my_pos.x - ter_pos.x;
+        int16_t dy = my_pos.y - ter_pos.y;
+        
+        // Calculate unit vector away from target (or default direction if on same spot)
+        if (dx == 0 && dy == 0) {
+            dx = 1; dy = 0; // default direction if spawned at exact same position
+        }
+        
+        // Move away to guard_range distance
+        int dist = (int)sqrt((double)dist_to_ter);
+        if (dist == 0) dist = 1;
+        
+        *target_pri = (point_t){
+            ter_pos.x + (dx * guard_range) / dist,
+            ter_pos.y + (dy * guard_range) / dist
+        };
+        *have_target_pri = 1;
+        *aproach = 0; // move as close as possible to the away-point
+    } else {
+        // At good distance or too far - orbit around guarded unit at guard_range
+        *target_pri = ter_pos;
+        *have_target_pri = 1;
+        *aproach = guard_range;
+    }
     
     // Detect enemies in area around tertiary target
     unit_id_t detect_id[MAX_UNITS];
@@ -357,15 +397,24 @@ int main(int argc, char **argv) {
     srand((unsigned)(time(NULL) ^ (getpid() << 16)));
 
     if (ipc_attach(&ctx, ftok_path) == -1) {
+        LOGE("[SQ] ipc_attach failed: %s", strerror(errno));
         perror("ipc_attach");
         return 1;
     }
+    g_ctx = &ctx;
+    g_unit_id = unit_id;
 
-    log_init("SQ", unit_id);
+    if (log_init("SQ", unit_id) == -1) {
+        fprintf(stderr, "[SQ %u] log_init failed, continuing without logs\n", unit_id);
+    }
     atexit(log_close);
 
     // ensure registry entry is correct
-    sem_lock(ctx.sem_id, SEM_GLOBAL_LOCK);
+    if (sem_lock(ctx.sem_id, SEM_GLOBAL_LOCK) == -1) {
+        LOGE("[SQ %u] failed to acquire initial lock: %s", unit_id, strerror(errno));
+        perror("sem_lock");
+        cleanup_and_exit(1);
+    }
     ctx.S->units[unit_id].pid = getpid();
     ctx.S->units[unit_id].faction = (uint8_t)faction;
     ctx.S->units[unit_id].type = (uint8_t)type_i;
@@ -390,7 +439,11 @@ int main(int argc, char **argv) {
             continue;
         }
 
-        if (sem_lock_intr(ctx.sem_id, SEM_GLOBAL_LOCK, &g_stop) == -1) break;
+        if (sem_lock_intr(ctx.sem_id, SEM_GLOBAL_LOCK, &g_stop) == -1) {
+            if (g_stop) break;
+            LOGE("[SQ %u] sem_lock_intr failed: %s", unit_id, strerror(errno));
+            continue;
+        }
 
         uint32_t t;
         uint8_t alive;
@@ -439,7 +492,14 @@ int main(int argc, char **argv) {
         // perform action based on current order
         LOGD("[SQ %u] taking order | tick=%u pos=(%d,%d) order=%d",
              unit_id, t, cp.x, cp.y, order);
-        if (sem_lock_intr(ctx.sem_id, SEM_GLOBAL_LOCK, &g_stop) == -1) break;
+        if (sem_lock_intr(ctx.sem_id, SEM_GLOBAL_LOCK, &g_stop) == -1) {
+            if (g_stop) break;
+            LOGE("[SQ %u] sem_lock_intr(action) failed: %s", unit_id, strerror(errno));
+            if (sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1) == -1) {
+                LOGE("sem_post_retry(TICK_DONE)");
+            }
+            break;
+        }
         
         // perform action based on current order
         squadrone_action(&ctx, unit_id, &st,
@@ -447,9 +507,20 @@ int main(int argc, char **argv) {
                         &secondary_target, &have_target_sec,
                         &tertiary_target, &have_target_ter);
 
+        point_t pos = ctx.S->units[unit_id].position;
         sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
 
-        if (sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1) == -1) break;
+        if ((t % 1) == 0) {
+            LOGI("[BS %u] tick=%u pos=(%d,%d) target=(%d,%d) dt2=%d  hp=%d, sp=%d, fa=%d",
+                unit_id, t, pos.x, pos.y, primary_target.x, primary_target.y,
+                dist2(pos, primary_target), st.hp, st.sp, faction);
+        }
+
+        if (sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1) == -1) {
+            LOGE("sem_post_retry(TICK_DONE)");
+            perror("sem_post_retry(TICK_DONE)");
+            break;
+        }
     }
 
     LOGW("[SQ %u] terminating, cleaning registry/grid", unit_id);

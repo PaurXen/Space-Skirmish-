@@ -2,6 +2,7 @@
 #include <stdint.h>
 
 #include "ipc/shared.h"
+#include "ipc/ipc_context.h"
 
 /*
 calculates damage multiplier based on attacker type and target type
@@ -84,6 +85,9 @@ picks random point on discrete circle border (ring) on the grid
 int radar_pick_random_point_on_circle_border(
     point_t pos, int16_t r,
     int grid_w, int grid_h,
+    int8_t unit_size,
+    unit_id_t moving_unit_id,
+    ipc_ctx_t *ctx,
     point_t *out
 );
 
@@ -174,6 +178,9 @@ int unit_next_step_towards(
     int approach,
     int grid_w, int grid_h,
     const unit_id_t grid[grid_w][grid_h],
+    unit_id_t moving_unit_id,
+    st_points_t unit_size,
+    ipc_ctx_t *ctx,
     point_t *out_next
 );
 
@@ -224,6 +231,9 @@ int unit_next_step_towards_dr(
     int approach,
     int grid_w, int grid_h,
     const unit_id_t grid[grid_w][grid_h],
+    unit_id_t moving_unit_id,
+    st_points_t unit_size,
+    ipc_ctx_t *ctx,
     point_t *out_next
 );
 

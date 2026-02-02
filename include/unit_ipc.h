@@ -34,6 +34,18 @@ changes unit position and moves it on the grid to specific location
 void unit_change_position(ipc_ctx_t *ctx, unit_id_t unit_id, point_t new_pos);
 
 /*
+Get the target position for aiming/movement, accounting for unit size.
+Returns the closest cell of the target unit to the attacker.
+    args:
+        -ctx (ipc_ctx_t*) -> context
+        -attacker_id (unit_id_t) -> id of attacking/moving unit
+        -target_id (unit_id_t) -> id of target unit
+    return (point_t):
+        closest cell position of target to attacker
+*/
+point_t get_target_position(ipc_ctx_t *ctx, unit_id_t attacker_id, unit_id_t target_id);
+
+/*
 adds damage to damage payload of trgeted unit
     args:
         -ctx (ipc_ctx_t*) -> --//--

@@ -1,5 +1,7 @@
 #include "unit_ipc.h"
 #include "ipc/ipc_mesq.h"
+#include "unit_size.h"
+#include "unit_stats.h"
 
 
 
@@ -16,22 +18,29 @@ unit_id_t check_if_occupied(ipc_ctx_t *ctx, point_t point) {
 void unit_change_position(ipc_ctx_t *ctx, unit_id_t unit_id, point_t new_pos) {
     // sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK);
     point_t old_pos = ctx->S->units[unit_id].position;
+    unit_type_t type = (unit_type_t)ctx->S->units[unit_id].type;
+    unit_stats_t stats = unit_stats_for_type(type);
+    st_points_t size = stats.si;
     
-    // Clear old position on grid
-    if (old_pos.x >= 0 && old_pos.x < M && old_pos.y >= 0 && old_pos.y < N) {
-        if (ctx->S->grid[old_pos.x][old_pos.y] == (unit_id_t)unit_id) {
-            ctx->S->grid[old_pos.x][old_pos.y] = 0;
-        }
-    }
+    // Remove unit from old position (all cells)
+    remove_unit_from_grid(ctx, unit_id, old_pos, size);
+    
+    // Place unit at new position (all cells)
+    place_unit_on_grid(ctx, unit_id, new_pos, size);
 
-    // Set new position on grid
-    if (new_pos.x >= 0 && new_pos.x < M && new_pos.y >= 0 && new_pos.y < N) {
-        ctx->S->grid[new_pos.x][new_pos.y] = unit_id;
-    }
-
-    // Update unit's position
+    // Update unit's center position
     ctx->S->units[unit_id].position = new_pos;
     // sem_unlock(ctx->sem_id, SEM_GLOBAL_LOCK);
+}
+
+point_t get_target_position(ipc_ctx_t *ctx, unit_id_t attacker_id, unit_id_t target_id) {
+    point_t attacker_pos = ctx->S->units[attacker_id].position;
+    point_t target_center = ctx->S->units[target_id].position;
+    unit_type_t target_type = (unit_type_t)ctx->S->units[target_id].type;
+    unit_stats_t target_stats = unit_stats_for_type(target_type);
+    
+    // Get closest cell of target to attacker
+    return get_closest_cell_to_attacker(attacker_pos, target_center, target_stats.si);
 }
 
 
@@ -137,7 +146,7 @@ st_points_t unit_weapon_shoot(ipc_ctx_t *ctx,
         if (weapon.w_target) {
             st_points_t dmg = damage_to_target(&unit, &target, &st->ba.arr[i], accuracy);
             out_dmg[i] = dmg;
-            unit_add_to_dmg_payload(ctx, target_sec, dmg);
+            if (dmg) unit_add_to_dmg_payload(ctx, target_sec, dmg);
         }
     }
     char buf[256];
@@ -185,7 +194,7 @@ unit_id_t unit_chose_secondary_target(ipc_ctx_t *ctx,
     }
     if (!max_id) return 0;
     
-    *target_pri = u[max_id].position;
+    *target_pri = get_target_position(ctx, unit_id, max_id);
     *have_target_pri = 1;
     *have_target_sec = 1;
 
@@ -204,6 +213,9 @@ int8_t unit_chose_patrol_point(ipc_ctx_t *ctx,
             ctx->S->units[unit_id].position,
             st.dr,
             M, N,
+            st.si,
+            unit_id,
+            ctx,
             target_pri)) {
         LOGD("[BS %u] picked new patrol target (%d,%d)",
                 unit_id, target_pri->x, target_pri->y);
@@ -227,7 +239,7 @@ void unit_move(ipc_ctx_t *ctx,
     
     // Goal chosen from DR, next step chosen from SP toward that goal
     (void)unit_compute_goal_for_tick_dr(from, *target_pri, st->dr, M, N, &goal);
-    (void)unit_next_step_towards_dr(from, goal, st->sp, st->dr, aproach, M, N, ctx->S->grid, &next);
+    (void)unit_next_step_towards_dr(from, goal, st->sp, st->dr, aproach, M, N, ctx->S->grid, unit_id, st->si, ctx, &next);
 
     unit_change_position(ctx, unit_id, next);
 }
@@ -238,13 +250,13 @@ void mark_dead(ipc_ctx_t *ctx, unit_id_t unit_id) {
     if (unit_id <= MAX_UNITS) {
         ctx->S->units[unit_id].alive = 0;
 
-        int x = (int)ctx->S->units[unit_id].position.x;
-        int y = (int)ctx->S->units[unit_id].position.y;
-
-        if (x >= 0 && x < M && y >= 0 && y < N) {
-            if (ctx->S->grid[x][y] == (unit_id_t)unit_id)
-                ctx->S->grid[x][y] = 0;
-        }
+        point_t pos = ctx->S->units[unit_id].position;
+        unit_type_t type = (unit_type_t)ctx->S->units[unit_id].type;
+        unit_stats_t stats = unit_stats_for_type(type);
+        st_points_t size = stats.si;
+        
+        // Remove unit from all grid cells it occupies
+        remove_unit_from_grid(ctx, unit_id, pos, size);
     }
 
     // sem_unlock(ctx->sem_id, SEM_GLOBAL_LOCK);

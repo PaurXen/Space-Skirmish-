@@ -6,6 +6,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include <time.h>
+#include <errno.h>
 
 #include "ipc/ipc_context.h"
 #include "ipc/semaphores.h"
@@ -25,6 +26,19 @@ static volatile sig_atomic_t g_stop = 0;
 static volatile sig_atomic_t g_damage_pending = 0;
 
 static volatile unit_id_t underlings[MAX_UNITS];
+
+static ipc_ctx_t *g_ctx = NULL;
+static unit_id_t g_unit_id = 0;
+
+/* Cleanup function to detach IPC and mark unit dead on error */
+static void cleanup_and_exit(int exit_code) {
+    if (g_ctx && g_unit_id > 0) {
+        LOGW("[BS %u] cleanup_and_exit called, marking dead", g_unit_id);
+        mark_dead(g_ctx, g_unit_id);
+        ipc_detach(g_ctx);
+    }
+    exit(exit_code);
+}
 
 static void on_damage(int sig) {
     (void)sig;
@@ -80,7 +94,11 @@ static void patrol_action(ipc_ctx_t *ctx,
             target_pri, have_target_pri, have_target_sec);
     }
 
-
+    // Determine approach distance FIRST (before checking if we've reached target)
+    if (*have_target_sec) {
+        unit_type_t target_type = (unit_type_t)ctx->S->units[*target_sec].type;
+        *aproach = (int)unit_calculate_aproach(st->ba, target_type);
+    }
 
     // Chosing patrol point
     if (*have_target_pri && in_disk_i(from.x, from.y, target_pri->x, target_pri->y, *aproach)) *have_target_pri = 0;
@@ -88,10 +106,6 @@ static void patrol_action(ipc_ctx_t *ctx,
         *have_target_pri = unit_chose_patrol_point(ctx, unit_id, target_pri, *st); 
     }
     LOGD("[BS %u] target (%d,%d)", unit_id, target_pri->x, target_pri->y);
-    if (*have_target_sec) {
-        unit_type_t target_type = (unit_type_t)ctx->S->units[*target_sec].type;
-        *aproach = (int)unit_calculate_aproach(st->ba, target_type);
-    }
 
 
     
@@ -157,7 +171,7 @@ static void battleship_action(ipc_ctx_t *ctx,
     printf("detected %d units\n", count);
     fflush(stdout);
 
-    int aproach = 1;
+    int aproach = st->si;
     point_t from = ctx->S->units[unit_id].position;
 
     switch (order)
@@ -283,7 +297,6 @@ int main(int argc, char **argv) {
     point_t primary_target = {0};
     unit_id_t secondary_target = 0;
     unit_id_t unit_id = 0;
-    int16_t spawn_range = 2;
 
     memset(underlings, 0, sizeof(underlings));
     
@@ -330,13 +343,20 @@ int main(int argc, char **argv) {
     srand((unsigned)(time(NULL) ^ (getpid() << 16)));
 
     if (ipc_attach(&ctx, ftok_path) == -1) {
+        LOGE("[BS] ipc_attach failed: %s", strerror(errno));
         perror("ipc_attach");
         return 1;
     }
+    g_ctx = &ctx;
+    g_unit_id = unit_id;
 
 
     // ensure registry entry is correct
-    sem_lock(ctx.sem_id, SEM_GLOBAL_LOCK);
+    if (sem_lock(ctx.sem_id, SEM_GLOBAL_LOCK) == -1) {
+        LOGE("[BS %u] failed to acquire initial lock: %s", unit_id, strerror(errno));
+        perror("sem_lock");
+        cleanup_and_exit(1);
+    }
     ctx.S->units[unit_id].pid = getpid();
     ctx.S->units[unit_id].faction = (uint8_t)faction;
     ctx.S->units[unit_id].type = (uint8_t)type_i;
@@ -345,7 +365,9 @@ int main(int argc, char **argv) {
     ctx.S->units[unit_id].position.y = (int16_t)y;
     sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
 
-    log_init("BS", unit_id);
+    if (log_init("BS", unit_id) == -1) {
+        fprintf(stderr, "[BS %u] log_init failed, continuing without logs\n", unit_id);
+    }
     atexit(log_close);
 
     type = (unit_type_t)type_i;
@@ -368,7 +390,9 @@ int main(int argc, char **argv) {
         }
         
         if (sem_lock_intr(ctx.sem_id, SEM_GLOBAL_LOCK, &g_stop) == -1) {
-            break;
+            if (g_stop) break;
+            LOGE("[BS %u] sem_lock_intr failed: %s", unit_id, strerror(errno));
+            continue;
         }
         
         uint32_t t;
@@ -444,6 +468,11 @@ int main(int argc, char **argv) {
             unit_id, st.fb.capacity, st.fb.current);
         point_t pos = ctx.S->units[unit_id].position;
         if (st.fb.capacity > st.fb.current) {
+            // Calculate spawn range based on unit sizes:
+            // Need to clear battleship's size plus squadron's size plus buffer
+            unit_stats_t sq_stats = unit_stats_for_type(st.fb.sq_types[st.fb.current]);
+            int16_t spawn_range = st.si + sq_stats.si + 1;
+            
             point_t out;
             radar_pick_random_point_in_circle(pos.x, pos.y, spawn_range, M, N, &out);
             mq_spawn_req_t req = {

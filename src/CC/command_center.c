@@ -11,6 +11,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <pthread.h>
 
 #include "ipc/ipc_context.h"
 #include "ipc/semaphores.h"
@@ -39,6 +40,12 @@
 static volatile sig_atomic_t g_stop = 0;
 static volatile sig_atomic_t g_frozen = 0;
 static volatile int g_tick_speed_ms = 1000;  /* tick speed in milliseconds */
+static pthread_mutex_t g_cm_mutex = PTHREAD_MUTEX_INITIALIZER;  /* protects g_frozen and g_tick_speed_ms */
+
+/* Global paths for CM thread to access */
+static const char *g_battleship_path = "./battleship";
+static const char *g_squadron_path = "./squadron";
+static const char *g_ftok_path = "./ipc.key";
 
 /* Signal handler: set cooperative stop flag */
 static void on_term(int sig) {
@@ -316,24 +323,30 @@ static void handle_cm_command(ipc_ctx_t *ctx) {
     
     switch (cmd.cmd) {
         case CM_CMD_FREEZE:
+            pthread_mutex_lock(&g_cm_mutex);
             g_frozen = 1;
+            pthread_mutex_unlock(&g_cm_mutex);
             snprintf(response.message, sizeof(response.message), 
                      "Simulation frozen");
             LOGI("[CC] Simulation frozen by CM command");
             break;
             
         case CM_CMD_UNFREEZE:
+            pthread_mutex_lock(&g_cm_mutex);
             g_frozen = 0;
+            pthread_mutex_unlock(&g_cm_mutex);
             snprintf(response.message, sizeof(response.message),
                      "Simulation resumed");
             LOGI("[CC] Simulation unfrozen by CM command");
             break;
             
         case CM_CMD_TICKSPEED_GET:
+            pthread_mutex_lock(&g_cm_mutex);
             response.tick_speed_ms = g_tick_speed_ms;
+            pthread_mutex_unlock(&g_cm_mutex);
             snprintf(response.message, sizeof(response.message),
-                     "Current tick speed: %d ms", g_tick_speed_ms);
-            LOGI("[CC] Tick speed query: %d ms", g_tick_speed_ms);
+                     "Current tick speed: %d ms", response.tick_speed_ms);
+            LOGI("[CC] Tick speed query: %d ms", response.tick_speed_ms);
             break;
             
         case CM_CMD_TICKSPEED_SET:
@@ -343,12 +356,20 @@ static void handle_cm_command(ipc_ctx_t *ctx) {
                 response.status = -1;
                 LOGE("[CC] Invalid tick speed: %d", cmd.tick_speed_ms);
             } else {
+                pthread_mutex_lock(&g_cm_mutex);
                 g_tick_speed_ms = cmd.tick_speed_ms;
+                pthread_mutex_unlock(&g_cm_mutex);
                 snprintf(response.message, sizeof(response.message),
-                         "Tick speed set to %d ms", g_tick_speed_ms);
-                LOGI("[CC] Tick speed set to %d ms", g_tick_speed_ms);
+                         "Tick speed set to %d ms", cmd.tick_speed_ms);
+                LOGI("[CC] Tick speed set to %d ms", cmd.tick_speed_ms);
             }
             break;
+            
+        case CM_CMD_SPAWN:
+            /* Spawn commands from CM now use MSG_SPAWN protocol like BS */
+            snprintf(response.message, sizeof(response.message),
+                     "Spawn command should use MSG_SPAWN protocol");
+            response.status = -1;
             
         case CM_CMD_END:
             snprintf(response.message, sizeof(response.message),
@@ -372,6 +393,23 @@ static void handle_cm_command(ipc_ctx_t *ctx) {
     }
 }
 
+/* CM thread function - runs independently to handle console manager commands */
+static void* cm_thread_func(void* arg) {
+    ipc_ctx_t *ctx = (ipc_ctx_t*)arg;
+    
+    LOGI("[CC-CM-Thread] CM handler thread started");
+    
+    while (!g_stop) {
+        handle_cm_command(ctx);
+        
+        /* Small sleep to avoid busy-waiting */
+        usleep(10000);  /* 10ms */
+    }
+    
+    LOGI("[CC-CM-Thread] CM handler thread exiting");
+    return NULL;
+}
+
 
 int main(int argc, char **argv) {
     // atexit(exit_handler);
@@ -385,6 +423,11 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--battleship") && i+1<argc) battleship = argv[++i];
         else if (!strcmp(argv[i], "--squadron") && i+1<argc) squadron = argv[++i];
     }
+    
+    /* Set global paths for CM thread */
+    g_battleship_path = battleship;
+    g_squadron_path = squadron;
+    g_ftok_path = ftok_path;
 
     /* Setup signal handlers for clean shutdown */
     struct sigaction sa;
@@ -452,6 +495,15 @@ int main(int argc, char **argv) {
     LOGI("[CC] shm_id=%d sem_id=%d spawned 4 battleships. Ctrl+C to stop.",ctx.shm_id, ctx.sem_id);
     printf("[CC] shm_id=%d sem_id=%d spawned 4 battleships. Ctrl+C to stop.\n",ctx.shm_id, ctx.sem_id);
 
+    /* Start CM handler thread */
+    pthread_t cm_thread;
+    int thread_ret = pthread_create(&cm_thread, NULL, cm_thread_func, &ctx);
+    if (thread_ret != 0) {
+        LOGE("[CC] Failed to create CM thread: %s", strerror(thread_ret));
+        fprintf(stderr, "[CC] Warning: CM thread creation failed, continuing without CM support\n");
+    } else {
+        LOGI("[CC] CM handler thread started successfully");
+    }
 
     /* Main tick loop:
      *  - sleep for tick interval
@@ -462,7 +514,10 @@ int main(int argc, char **argv) {
      */
     while (!g_stop) {
         /* Use select/poll with timeout instead of usleep to check g_stop more often */
+        pthread_mutex_lock(&g_cm_mutex);
         useconds_t tick_us = g_tick_speed_ms * 1000;
+        pthread_mutex_unlock(&g_cm_mutex);
+        
         struct timeval tv = {0, tick_us};
         fd_set rfds;
         FD_ZERO(&rfds);
@@ -477,27 +532,67 @@ int main(int argc, char **argv) {
 
         if (sem_lock_intr(ctx.sem_id, SEM_GLOBAL_LOCK, &g_stop) == -1) break;
 
-        /* Check for CM commands */
-        handle_cm_command(&ctx);
-
         mq_spawn_req_t r;
         while (mq_try_recv_spawn(ctx.q_req, &r) == 1) {
-
-            LOGD("[CC] received spawn request from BS %u at (%d,%d) for type %d",
-                    r.sender_id, r.pos.x, r.pos.y, r.utype);
+            
+            /* Determine if this is from BS (has sender_id) or CM (sender_id == 0) */
+            int is_from_cm = (r.sender_id == 0);
+            
+            if (is_from_cm) {
+                LOGD("[CC] received spawn request from CM at (%d,%d) for type %d faction %d",
+                        r.pos.x, r.pos.y, r.utype, r.faction);
+            } else {
+                LOGD("[CC] received spawn request from BS %u at (%d,%d) for type %d",
+                        r.sender_id, r.pos.x, r.pos.y, r.utype);
+            }
+            
             int16_t status;
             pid_t child_pid = -1;
             unit_id_t child_unit_id = 0;
+            
+            /* Validate spawn parameters for CM requests */
+            if (is_from_cm) {
+                if (r.utype < TYPE_FLAGSHIP || r.utype > TYPE_ELITE) {
+                    status = -1;
+                    LOGE("[CC] CM spawn failed: invalid type %d", r.utype);
+                    goto send_spawn_reply;
+                }
+                if (r.faction != FACTION_REPUBLIC && r.faction != FACTION_CIS) {
+                    status = -1;
+                    LOGE("[CC] CM spawn failed: invalid faction %d", r.faction);
+                    goto send_spawn_reply;
+                }
+            }
             
             // Check if the unit can fit at the requested position
             unit_stats_t spawn_stats = unit_stats_for_type((unit_type_t)r.utype);
             if (can_fit_at_position(&ctx, r.pos, spawn_stats.si, 0) && 
                 in_bounds(r.pos.x, r.pos.y, M, N)) {
+                
+                /* Determine faction and executable path */
+                faction_t spawn_faction;
+                const char *exe_path;
+                
+                if (is_from_cm) {
+                    /* CM specifies faction in request */
+                    spawn_faction = r.faction;
+                    /* Choose executable based on type */
+                    if (r.utype == TYPE_FIGHTER || r.utype == TYPE_BOMBER || r.utype == TYPE_ELITE) {
+                        exe_path = squadron;
+                    } else {
+                        exe_path = battleship;
+                    }
+                } else {
+                    /* BS spawn inherits faction from parent */
+                    spawn_faction = ctx.S->units[r.sender_id].faction;
+                    exe_path = squadron;  // BS only spawns squadrons
+                }
+                
                 child_pid = spawn_squadron(
                     &ctx,
-                    squadron,
+                    exe_path,
                     r.utype,
-                    ctx.S->units[r.sender_id].faction,
+                    spawn_faction,
                     r.pos,
                     ftok_path,
                     r.commander_id,
@@ -505,14 +600,14 @@ int main(int argc, char **argv) {
                 );
                 status = 0;
             } else {
+                status = -1;
                 LOGI("[CC] spawn request at (%d,%d) rejected: insufficient space or OOB",
                         r.pos.x, r.pos.y);
                 fprintf(stderr, "[CC] spawn request at (%d,%d) rejected: insufficient space or OOB\n",
                         r.pos.x, r.pos.y);
-                status = -1;
             }
 
-
+send_spawn_reply:
             mq_spawn_rep_t rep = {
                 .mtype = r.sender,
                 .req_id = r.req_id,
@@ -525,7 +620,11 @@ int main(int argc, char **argv) {
         }
 
         /* Skip tick processing if frozen */
-        if (g_frozen) {
+        pthread_mutex_lock(&g_cm_mutex);
+        int is_frozen = g_frozen;
+        pthread_mutex_unlock(&g_cm_mutex);
+        
+        if (is_frozen) {
             sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
             continue;
         }
@@ -599,6 +698,13 @@ int main(int argc, char **argv) {
             g_stop = 1;
         }
 
+    }
+
+    /* Wait for CM thread to finish */
+    if (thread_ret == 0) {
+        LOGI("[CC] Waiting for CM thread to finish...");
+        pthread_join(cm_thread, NULL);
+        LOGI("[CC] CM thread finished");
     }
 
     /* Shutdown sequence:

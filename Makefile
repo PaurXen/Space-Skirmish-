@@ -10,7 +10,7 @@ launcher: src/launcher.o
 	$(CC) $(CFLAGS) -o launcher $^
 
 command_center: src/CC/command_center.o src/ipc/semaphores.o src/ipc/ipc_context.o src/utils.o src/CC/terminal_tee.o src/ipc/ipc_mesq.o src/CC/unit_logic.o src/CC/unit_ipc.o src/CC/unit_stats.o src/CC/unit_size.o src/CC/weapon_stats.o
-	$(CC) $(CFLAGS) -o command_center $^
+	$(CC) $(CFLAGS) -o command_center $^ -lpthread
 
 console_manager: src/CM/console_manager.o src/ipc/ipc_context.o src/ipc/ipc_mesq.o src/ipc/semaphores.o src/utils.o
 	$(CC) $(CFLAGS) -o console_manager $^

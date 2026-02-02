@@ -358,8 +358,8 @@ int main(int argc, char **argv) {
         cleanup_and_exit(1);
     }
     ctx.S->units[unit_id].pid = getpid();
-    ctx.S->units[unit_id].faction = (uint8_t)faction;
-    ctx.S->units[unit_id].type = (uint8_t)type_i;
+    ctx.S->units[unit_id].faction = (faction_t)faction;
+    ctx.S->units[unit_id].type = (unit_type_t)type_i;
     ctx.S->units[unit_id].alive = 1;
     ctx.S->units[unit_id].position.x = (int16_t)x;
     ctx.S->units[unit_id].position.y = (int16_t)y;
@@ -479,6 +479,7 @@ int main(int argc, char **argv) {
             .mtype = MSG_SPAWN,
             .sender = getpid(),
             .sender_id = unit_id,
+            .faction = faction,
             .commander_id = unit_id,
             .pos = out,
             .sender_id = unit_id,

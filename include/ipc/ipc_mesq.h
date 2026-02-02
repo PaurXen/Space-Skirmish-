@@ -14,17 +14,19 @@ typedef enum {
     CM_CMD_UNFREEZE,
     CM_CMD_TICKSPEED_GET,
     CM_CMD_TICKSPEED_SET,
+    CM_CMD_SPAWN,
     CM_CMD_END
 } cm_command_type_t;
 
 typedef struct {
     long mtype;          // MSG_SPAWN
-    pid_t sender;        // BS pid
-    unit_id_t sender_id;   // BS unit_id
+    pid_t sender;        // BS/CM pid
+    unit_id_t sender_id;   // BS unit_id (0 for CM)
     point_t pos;        // desired spawn coords
     unit_type_t utype;       // unit_type_t to spawn
+    faction_t faction;   // faction for spawned unit (for CM requests)
     uint32_t req_id;     // optional: correlate replies
-    unit_id_t commander_id;  // BS unit_id to assign as commander
+    unit_id_t commander_id;  // BS unit_id to assign as commander (0 for CM)
 } mq_spawn_req_t;
 
 typedef struct {
@@ -67,6 +69,11 @@ typedef struct {
     pid_t sender;         // CM pid
     uint32_t req_id;      // correlation id
     int32_t tick_speed_ms; // for TICKSPEED_SET command
+    /* Spawn parameters */
+    unit_type_t spawn_type;   // unit type to spawn
+    faction_t spawn_faction;  // faction
+    int16_t spawn_x;          // x coordinate
+    int16_t spawn_y;          // y coordinate
 } mq_cm_cmd_t;
 
 typedef struct {

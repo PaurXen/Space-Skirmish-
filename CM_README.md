@@ -18,6 +18,29 @@ CM and CC communicate via **message queues** using the existing IPC infrastructu
 - **Request Queue** (`q_req`): CM sends commands to CC
 - **Reply Queue** (`q_rep`): CC sends responses back to CM
 
+### Architecture - Threaded CM Handler
+
+CC now uses a **dedicated thread** for handling CM commands:
+
+```
+CC Process
+├── Main Thread (simulation loop)
+│   ├── Tick management
+│   ├── Spawn requests
+│   └── Unit synchronization
+│
+└── CM Handler Thread (independent)
+    ├── Receives CM commands
+    ├── Updates shared variables (thread-safe)
+    └── Sends replies
+```
+
+**Benefits:**
+- ✅ CM commands processed **without blocking** main simulation loop
+- ✅ More responsive to user input
+- ✅ Main simulation continues smoothly even during CM operations
+- ✅ Thread-safe access via `pthread_mutex`
+
 ### Message Flow
 
 1. CM sends command via `mq_send_cm_cmd()` with type `MSG_CM_CMD`
@@ -44,13 +67,14 @@ CM and CC communicate via **message queues** using the existing IPC infrastructu
 ### Available Commands
 
 ```
-CM> freeze / f         - Pause simulation
-CM> unfreeze / uf      - Resume simulation
-CM> tickspeed [ms]     - Get or set tick speed (0-1000000 ms)
-CM> ts [ms]            - Alias for tickspeed
-CM> end                - Shutdown simulation gracefully
-CM> help               - Show available commands
-CM> quit               - Exit console manager
+CM> freeze / f                      - Pause simulation
+CM> unfreeze / uf                   - Resume simulation
+CM> tickspeed [ms] / ts             - Get or set tick speed (0-1000000 ms)
+CM> spawn <type> <faction> <x> <y>  - Spawn unit at position
+CM> sp <type> <faction> <x> <y>     - Alias for spawn
+CM> end                             - Shutdown simulation gracefully
+CM> help                            - Show available commands
+CM> quit                            - Exit console manager
 ```
 
 **Examples:**
@@ -60,7 +84,17 @@ CM> ts 500          # Set tick speed to 500ms
 CM> f               # Freeze (short form)
 CM> uf              # Unfreeze (short form)
 CM> tickspeed 2000  # Set tick speed to 2 seconds
+CM> spawn carrier republic 50 50    # Spawn Republic carrier at (50,50)
+CM> sp fighter cis 30 30            # Spawn CIS fighter at (30,30)
+CM> spawn 3 1 40 40                 # Spawn type 3 (carrier), faction 1 (republic) at (40,40)
 ```
+
+**Spawn Command Details:**
+- **Types**: carrier/3, destroyer/2, flagship/1, fighter/4, bomber/5, elite/6
+- **Factions**: republic/1, cis/2
+- Both names and numeric IDs are accepted
+- Position must be within grid bounds
+- Unit will be assigned next available unit ID
 
 ## Implementation Details
 
@@ -93,14 +127,16 @@ CM> tickspeed 2000  # Set tick speed to 2 seconds
 5. **`src/CC/command_center.c`**
    - Added `g_frozen` flag for freeze/unfreeze
    - Added `g_tick_speed_ms` variable for dynamic tick speed control
-   - Updated `handle_cm_command()` to implement TICKSPEED_GET and TICKSPEED_SET
-   - Removed custom message queue setup
-   - Calls `handle_cm_command(&ctx)` in main loop
+   - Added `g_cm_mutex` pthread mutex for thread-safe access
+   - Created `cm_thread_func()` - dedicated thread for CM command handling
+   - Updated `handle_cm_command()` with mutex protection for shared variables
+   - Main loop reads `g_frozen` and `g_tick_speed_ms` with mutex locks
+   - Thread created at startup, joined at shutdown
    - **Tick overflow guard**: Resets tick counter when approaching UINT32_MAX
-   - Uses `g_tick_speed_ms` for dynamic sleep interval
+   - **No longer blocks** main simulation when processing CM commands
 
 6. **`Makefile`**
-   - Updated `console_manager` target with IPC dependencies
+   - Updated `command_center` target to link with `-lpthread`
 
 ### Message Queue Functions
 
@@ -144,6 +180,7 @@ CM> quit   # This will exit CM
 1. **Freeze/Unfreeze**: ✅ Fully implemented with command aliases (f/uf)
 2. **Tickspeed Control**: ✅ Dynamic tick speed adjustment (0-1000000 ms)
 3. **Tick Overflow Guard**: ✅ Automatic reset when approaching UINT32_MAX
+4. **Spawn Command**: ✅ Runtime unit spawning with type/faction support
 
 ### Future Enhancements
 
@@ -181,6 +218,17 @@ For convenience, short aliases are provided:
 - `f` → `freeze`
 - `uf` → `unfreeze`  
 - `ts` → `tickspeed`
+
+### Thread Safety
+
+All shared variables accessed by both the main simulation thread and CM handler thread are protected by `pthread_mutex`:
+- `g_frozen` - simulation pause state
+- `g_tick_speed_ms` - tick interval in milliseconds
+
+The CM thread runs independently with a 10ms polling interval, ensuring:
+- Minimal CPU usage when idle
+- Fast response to CM commands (typically <10ms)
+- No interference with simulation timing
 
 ## Benefits of This Design
 

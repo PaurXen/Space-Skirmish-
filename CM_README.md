@@ -44,13 +44,22 @@ CM and CC communicate via **message queues** using the existing IPC infrastructu
 ### Available Commands
 
 ```
-CM> freeze      - Pause simulation (not fully implemented)
-CM> unfreeze    - Resume simulation (not fully implemented)
-CM> speedup     - Increase simulation speed (not fully implemented)
-CM> slowdown    - Decrease simulation speed (not fully implemented)
-CM> end         - Shutdown simulation gracefully
-CM> help        - Show available commands
-CM> quit        - Exit console manager
+CM> freeze / f         - Pause simulation
+CM> unfreeze / uf      - Resume simulation
+CM> tickspeed [ms]     - Get or set tick speed (0-1000000 ms)
+CM> ts [ms]            - Alias for tickspeed
+CM> end                - Shutdown simulation gracefully
+CM> help               - Show available commands
+CM> quit               - Exit console manager
+```
+
+**Examples:**
+```
+CM> ts              # Query current tick speed
+CM> ts 500          # Set tick speed to 500ms
+CM> f               # Freeze (short form)
+CM> uf              # Unfreeze (short form)
+CM> tickspeed 2000  # Set tick speed to 2 seconds
 ```
 
 ## Implementation Details
@@ -59,8 +68,9 @@ CM> quit        - Exit console manager
 
 1. **`include/ipc/ipc_mesq.h`**
    - Added `MSG_CM_CMD` message type
-   - Added `cm_command_type_t` enum
-   - Added `mq_cm_cmd_t` and `mq_cm_rep_t` structures
+   - Added `cm_command_type_t` enum (FREEZE, UNFREEZE, TICKSPEED_GET, TICKSPEED_SET, END)
+   - Added `mq_cm_cmd_t` structure with `tick_speed_ms` field
+   - Added `mq_cm_rep_t` structure with `tick_speed_ms` field for responses
    - Added CM message queue function prototypes
 
 2. **`src/ipc/ipc_mesq.c`**
@@ -77,11 +87,17 @@ CM> quit        - Exit console manager
    - Refactored to use IPC context
    - Uses `ipc_attach()` to connect to existing IPC
    - Uses blocking receive for synchronous command-response pattern
+   - Parses command aliases (f/uf, ts/tickspeed)
+   - Handles tickspeed with optional argument
 
 5. **`src/CC/command_center.c`**
-   - Updated `handle_cm_command()` to use IPC mesq functions
+   - Added `g_frozen` flag for freeze/unfreeze
+   - Added `g_tick_speed_ms` variable for dynamic tick speed control
+   - Updated `handle_cm_command()` to implement TICKSPEED_GET and TICKSPEED_SET
    - Removed custom message queue setup
    - Calls `handle_cm_command(&ctx)` in main loop
+   - **Tick overflow guard**: Resets tick counter when approaching UINT32_MAX
+   - Uses `g_tick_speed_ms` for dynamic sleep interval
 
 6. **`Makefile`**
    - Updated `console_manager` target with IPC dependencies
@@ -123,14 +139,48 @@ CM> quit   # This will exit CM
 
 ## Next Steps
 
-To fully implement the commands:
+### Implemented Features ✅
 
-1. **Freeze/Unfreeze**: Add a global flag in shared memory that units check
-2. **Speedup/Slowdown**: Modify the tick_us variable or add speed multiplier
-3. **Status**: Expose more simulation state information
-4. **Kill**: Already partially implemented
-5. **Spawn**: Integrate with spawn system
-6. **Order**: Send orders to specific units
+1. **Freeze/Unfreeze**: ✅ Fully implemented with command aliases (f/uf)
+2. **Tickspeed Control**: ✅ Dynamic tick speed adjustment (0-1000000 ms)
+3. **Tick Overflow Guard**: ✅ Automatic reset when approaching UINT32_MAX
+
+### Future Enhancements
+
+1. **Status**: Expose more simulation state information
+2. **Kill**: Implement unit termination command
+3. **Spawn**: Integrate with spawn system via CM
+4. **Order**: Send orders to specific units via CM
+
+## Features
+
+### Tick Overflow Protection
+
+The Command Center includes an overflow guard that automatically resets the tick counter when it approaches `UINT32_MAX - 1000`:
+
+```c
+if (ctx.S->ticks >= UINT32_MAX - 1000) {
+    LOGI("[CC] Tick overflow guard triggered, resetting ticks from %u to 0", ctx.S->ticks);
+    ctx.S->ticks = 0;
+}
+```
+
+This ensures the program can run indefinitely without tick counter overflow issues.
+
+### Dynamic Tick Speed
+
+The tick speed can be adjusted at runtime:
+- Range: 0-1000000 milliseconds
+- Default: 1000 ms (1 second per tick)
+- Setting to 0 makes the simulation run as fast as possible
+- Higher values slow down the simulation
+
+### Command Aliases
+
+For convenience, short aliases are provided:
+- `f` → `freeze`
+- `uf` → `unfreeze`  
+- `ts` → `tickspeed`
 
 ## Benefits of This Design
 

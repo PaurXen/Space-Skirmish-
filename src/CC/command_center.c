@@ -37,6 +37,8 @@
  */
 
 static volatile sig_atomic_t g_stop = 0;
+static volatile sig_atomic_t g_frozen = 0;
+static volatile int g_tick_speed_ms = 1000;  /* tick speed in milliseconds */
 
 /* Signal handler: set cooperative stop flag */
 static void on_term(int sig) {
@@ -314,27 +316,38 @@ static void handle_cm_command(ipc_ctx_t *ctx) {
     
     switch (cmd.cmd) {
         case CM_CMD_FREEZE:
+            g_frozen = 1;
             snprintf(response.message, sizeof(response.message), 
-                     "Simulation frozen (not fully implemented)");
-            // TODO: Set global freeze flag
+                     "Simulation frozen");
+            LOGI("[CC] Simulation frozen by CM command");
             break;
             
         case CM_CMD_UNFREEZE:
+            g_frozen = 0;
             snprintf(response.message, sizeof(response.message),
-                     "Simulation resumed (not fully implemented)");
-            // TODO: Clear global freeze flag
+                     "Simulation resumed");
+            LOGI("[CC] Simulation unfrozen by CM command");
             break;
             
-        case CM_CMD_SPEEDUP:
+        case CM_CMD_TICKSPEED_GET:
+            response.tick_speed_ms = g_tick_speed_ms;
             snprintf(response.message, sizeof(response.message),
-                     "Speed increased (not fully implemented)");
-            // TODO: Decrease sleep time
+                     "Current tick speed: %d ms", g_tick_speed_ms);
+            LOGI("[CC] Tick speed query: %d ms", g_tick_speed_ms);
             break;
             
-        case CM_CMD_SLOWDOWN:
-            snprintf(response.message, sizeof(response.message),
-                     "Speed decreased (not fully implemented)");
-            // TODO: Increase sleep time
+        case CM_CMD_TICKSPEED_SET:
+            if (cmd.tick_speed_ms < 0 || cmd.tick_speed_ms > 1000000) {
+                snprintf(response.message, sizeof(response.message),
+                         "Invalid tick speed %d (must be 0-1000000)", cmd.tick_speed_ms);
+                response.status = -1;
+                LOGE("[CC] Invalid tick speed: %d", cmd.tick_speed_ms);
+            } else {
+                g_tick_speed_ms = cmd.tick_speed_ms;
+                snprintf(response.message, sizeof(response.message),
+                         "Tick speed set to %d ms", g_tick_speed_ms);
+                LOGI("[CC] Tick speed set to %d ms", g_tick_speed_ms);
+            }
             break;
             
         case CM_CMD_END:
@@ -366,8 +379,6 @@ int main(int argc, char **argv) {
     const char *ftok_path = "./ipc.key";
     const char *battleship = "./battleship";
     const char *squadron = "./squadron";
-
-    const useconds_t tick_us = 1000 * 1000 * 1; /* tick interval */
 
     for (int i=1; i<argc;i++) {
         if (!strcmp(argv[i], "--ftok") && i+1<argc) ftok_path = argv[++i];
@@ -451,6 +462,7 @@ int main(int argc, char **argv) {
      */
     while (!g_stop) {
         /* Use select/poll with timeout instead of usleep to check g_stop more often */
+        useconds_t tick_us = g_tick_speed_ms * 1000;
         struct timeval tv = {0, tick_us};
         fd_set rfds;
         FD_ZERO(&rfds);
@@ -510,6 +522,18 @@ int main(int argc, char **argv) {
             };
             mq_send_reply(ctx.q_rep, &rep);
 
+        }
+
+        /* Skip tick processing if frozen */
+        if (g_frozen) {
+            sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
+            continue;
+        }
+
+        /* Tick overflow guard - reset when approaching max */
+        if (ctx.S->ticks >= UINT32_MAX - 1000) {
+            LOGI("[CC] Tick overflow guard triggered, resetting ticks from %u to 0", ctx.S->ticks);
+            ctx.S->ticks = 0;
         }
 
         ctx.S->ticks++;

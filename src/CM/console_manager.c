@@ -41,37 +41,51 @@ static int parse_command(const char *line, mq_cm_cmd_t *cmd) {
         buffer[len-1] = '\0';
     }
     
+    /* Parse first word */
+    char first_word[64];
+    int tick_val = -1;
+    int args = sscanf(buffer, "%63s %d", first_word, &tick_val);
+    
+    if (args < 1) {
+        return -1;  /* Empty line */
+    }
+    
     /* Parse command */
-    if (strcmp(buffer, "freeze") == 0) {
+    if (strcmp(first_word, "freeze") == 0 || strcmp(first_word, "f") == 0) {
         cmd->cmd = CM_CMD_FREEZE;
         return 0;
-    } else if (strcmp(buffer, "unfreeze") == 0) {
+    } else if (strcmp(first_word, "unfreeze") == 0 || strcmp(first_word, "uf") == 0) {
         cmd->cmd = CM_CMD_UNFREEZE;
         return 0;
-    } else if (strcmp(buffer, "speedup") == 0) {
-        cmd->cmd = CM_CMD_SPEEDUP;
+    } else if (strcmp(first_word, "tickspeed") == 0 || strcmp(first_word, "ts") == 0) {
+        if (tick_val == -1) {
+            /* No argument - query current value */
+            cmd->cmd = CM_CMD_TICKSPEED_GET;
+        } else {
+            /* Argument provided - set value */
+            cmd->cmd = CM_CMD_TICKSPEED_SET;
+            cmd->tick_speed_ms = tick_val;
+        }
         return 0;
-    } else if (strcmp(buffer, "slowdown") == 0) {
-        cmd->cmd = CM_CMD_SLOWDOWN;
-        return 0;
-    } else if (strcmp(buffer, "end") == 0) {
+    } else if (strcmp(first_word, "end") == 0) {
         cmd->cmd = CM_CMD_END;
         return 0;
-    } else if (strcmp(buffer, "help") == 0) {
+    } else if (strcmp(first_word, "help") == 0) {
         printf("\nAvailable commands:\n");
-        printf("  freeze    - Pause simulation\n");
-        printf("  unfreeze  - Resume simulation\n");
-        printf("  speedup   - Increase simulation speed\n");
-        printf("  slowdown  - Decrease simulation speed\n");
-        printf("  end       - End simulation\n");
-        printf("  help      - Show this help\n");
-        printf("  quit      - Exit console manager\n\n");
+        printf("  freeze / f           - Pause simulation\n");
+        printf("  unfreeze / uf        - Resume simulation\n");
+        printf("  tickspeed [ms] / ts  - Get/set tick speed (0-1000000 ms)\n");
+        printf("                         No argument: show current value\n");
+        printf("                         With value: set tick speed\n");
+        printf("  end                  - End simulation\n");
+        printf("  help                 - Show this help\n");
+        printf("  quit                 - Exit console manager\n\n");
         return -1;  /* Don't send */
-    } else if (strcmp(buffer, "quit") == 0 || strcmp(buffer, "exit") == 0) {
+    } else if (strcmp(first_word, "quit") == 0 || strcmp(first_word, "exit") == 0) {
         g_stop = 1;
         return -1;  /* Don't send */
     } else {
-        printf("Unknown command: %s (type 'help' for available commands)\n", buffer);
+        printf("Unknown command: %s (type 'help' for available commands)\n", first_word);
         return -1;  /* Don't send */
     }
 }
@@ -109,6 +123,10 @@ static int send_and_wait(ipc_ctx_t *ctx, mq_cm_cmd_t *cmd) {
     /* Display result */
     if (reply.status == 0) {
         printf("[CM] ✓ Success: %s\n", reply.message);
+        /* For TICKSPEED_GET, also show the value clearly */
+        if (cmd->cmd == CM_CMD_TICKSPEED_GET) {
+            printf("[CM] Tick speed: %d ms\n", reply.tick_speed_ms);
+        }
     } else {
         printf("[CM] ✗ Error: %s (status=%d)\n", reply.message, reply.status);
     }

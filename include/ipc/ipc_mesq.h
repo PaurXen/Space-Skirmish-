@@ -12,8 +12,8 @@ enum { MSG_SPAWN = 1, MSG_COMMANDER_REQ = 2, MSG_COMMANDER_REP = 3, MSG_DAMAGE =
 typedef enum {
     CM_CMD_FREEZE,
     CM_CMD_UNFREEZE,
-    CM_CMD_SPEEDUP,
-    CM_CMD_SLOWDOWN,
+    CM_CMD_TICKSPEED_GET,
+    CM_CMD_TICKSPEED_SET,
     CM_CMD_END
 } cm_command_type_t;
 
@@ -66,6 +66,7 @@ typedef struct {
     cm_command_type_t cmd; // command type
     pid_t sender;         // CM pid
     uint32_t req_id;      // correlation id
+    int32_t tick_speed_ms; // for TICKSPEED_SET command
 } mq_cm_cmd_t;
 
 typedef struct {
@@ -73,6 +74,7 @@ typedef struct {
     uint32_t req_id;      // correlation id
     int16_t status;       // 0 ok, <0 fail
     char message[128];    // status message
+    int32_t tick_speed_ms; // for TICKSPEED_GET response
 } mq_cm_rep_t;
 
 int mq_try_recv_spawn(int qreq, mq_spawn_req_t *out);

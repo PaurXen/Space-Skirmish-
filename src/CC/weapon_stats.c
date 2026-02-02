@@ -1,6 +1,6 @@
 #include <stdint.h>
 #include "ipc/shared.h"
-#include "weapon_stats.h"
+#include "CC/weapon_stats.h"
 
 #define ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
 

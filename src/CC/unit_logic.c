@@ -2,10 +2,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "unit_logic.h"
-#include "weapon_stats.h"
-#include "unit_ipc.h"
-#include "unit_size.h"
+#include "CC/unit_logic.h"
+#include "CC/weapon_stats.h"
+#include "CC/unit_ipc.h"
+#include "CC/unit_size.h"
 #include "ipc/shared.h"
 
 typedef struct { int16_t dx, dy; } offset_t;

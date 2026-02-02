@@ -7,7 +7,15 @@
 #define MQ_KEY_REP 0x12346
 #define MQ_ORDER_MTYPE_OFFSET 100000
 
-enum { MSG_SPAWN = 1, MSG_COMMANDER_REQ = 2, MSG_COMMANDER_REP = 3, MSG_DAMAGE = 4, MSG_ORDER = 5 };
+enum { MSG_SPAWN = 1, MSG_COMMANDER_REQ = 2, MSG_COMMANDER_REP = 3, MSG_DAMAGE = 4, MSG_ORDER = 5, MSG_CM_CMD = 6 };
+
+typedef enum {
+    CM_CMD_FREEZE,
+    CM_CMD_UNFREEZE,
+    CM_CMD_SPEEDUP,
+    CM_CMD_SLOWDOWN,
+    CM_CMD_END
+} cm_command_type_t;
 
 typedef struct {
     long mtype;          // MSG_SPAWN
@@ -53,6 +61,20 @@ typedef struct {
     unit_id_t target_id; // target for ATTACK/GUARD orders
 } mq_order_t;
 
+typedef struct {
+    long mtype;           // MSG_CM_CMD
+    cm_command_type_t cmd; // command type
+    pid_t sender;         // CM pid
+    uint32_t req_id;      // correlation id
+} mq_cm_cmd_t;
+
+typedef struct {
+    long mtype;           // = sender pid (so CM can filter)
+    uint32_t req_id;      // correlation id
+    int16_t status;       // 0 ok, <0 fail
+    char message[128];    // status message
+} mq_cm_rep_t;
+
 int mq_try_recv_spawn(int qreq, mq_spawn_req_t *out);
 int mq_send_spawn(int qreq, const mq_spawn_req_t *req);
 
@@ -69,3 +91,9 @@ int mq_try_recv_damage(int qreq, mq_damage_t *out);
 
 int mq_send_order(int qreq, const mq_order_t *order);
 int mq_try_recv_order(int qreq, mq_order_t *out);
+
+int mq_send_cm_cmd(int qreq, const mq_cm_cmd_t *cmd);
+int mq_try_recv_cm_cmd(int qreq, mq_cm_cmd_t *out);
+int mq_send_cm_reply(int qrep, const mq_cm_rep_t *rep);
+int mq_try_recv_cm_reply(int qrep, mq_cm_rep_t *out);
+int mq_recv_cm_reply_blocking(int qrep, mq_cm_rep_t *out);

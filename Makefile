@@ -4,15 +4,21 @@ CFLAGS=-O2 -Wall -Wextra -std=c11 -Iinclude
 IPC_SRCS=src/ipc/semaphores.c src/ipc/ipc_context.c
 IPC_OBJS=$(IPC_SRCS:.c=.o)
 
-all: command_center battleship squadron
+all: launcher command_center console_manager battleship squadron
 
-command_center: src/command_center.o src/ipc/semaphores.o src/ipc/ipc_context.o src/utils.o src/terminal_tee.o src/ipc/ipc_mesq.o src/unit_logic.o src/unit_ipc.o src/unit_stats.o src/unit_size.o src/weapon_stats.o
+launcher: src/launcher.o
+	$(CC) $(CFLAGS) -o launcher $^
+
+command_center: src/CC/command_center.o src/ipc/semaphores.o src/ipc/ipc_context.o src/utils.o src/CC/terminal_tee.o src/ipc/ipc_mesq.o src/CC/unit_logic.o src/CC/unit_ipc.o src/CC/unit_stats.o src/CC/unit_size.o src/CC/weapon_stats.o
 	$(CC) $(CFLAGS) -o command_center $^
 
-battleship: src/battleship.o src/ipc/semaphores.o src/ipc/ipc_context.o src/utils.o src/unit_logic.o src/unit_stats.o src/unit_ipc.o src/weapon_stats.o src/ipc/ipc_mesq.o src/unit_size.o
+console_manager: src/CM/console_manager.o src/ipc/ipc_context.o src/ipc/ipc_mesq.o src/ipc/semaphores.o src/utils.o
+	$(CC) $(CFLAGS) -o console_manager $^
+
+battleship: src/CC/battleship.o src/ipc/semaphores.o src/ipc/ipc_context.o src/utils.o src/CC/unit_logic.o src/CC/unit_stats.o src/CC/unit_ipc.o src/CC/weapon_stats.o src/ipc/ipc_mesq.o src/CC/unit_size.o
 	$(CC) $(CFLAGS) -o battleship $^
 
-squadron: src/squadron.o src/ipc/semaphores.o src/ipc/ipc_context.o src/utils.o src/unit_logic.o src/unit_stats.o src/unit_ipc.o src/weapon_stats.o src/ipc/ipc_mesq.o src/unit_size.o
+squadron: src/CC/squadron.o src/ipc/semaphores.o src/ipc/ipc_context.o src/utils.o src/CC/unit_logic.o src/CC/unit_stats.o src/CC/unit_ipc.o src/CC/weapon_stats.o src/ipc/ipc_mesq.o src/CC/unit_size.o
 	$(CC) $(CFLAGS) -o squadron $^ -lm
 
 src/%.o: src/%.c
@@ -21,5 +27,11 @@ src/%.o: src/%.c
 src/ipc/%.o: src/ipc/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+src/CC/%.o: src/CC/%.c
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+src/CM/%.o: src/CM/%.c
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 clean:
-	rm -f command_center battleship squadron src/*.o src/ipc/*.o
+	rm -f launcher command_center console_manager battleship squadron src/*.o src/ipc/*.o src/CC/*.o src/CM/*.o

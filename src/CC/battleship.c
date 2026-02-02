@@ -13,10 +13,10 @@
 #include "ipc/shared.h"
 #include "ipc/ipc_mesq.h"
 
-#include "weapon_stats.h"
-#include "unit_stats.h"
-#include "unit_logic.h"
-#include "unit_ipc.h"
+#include "CC/weapon_stats.h"
+#include "CC/unit_stats.h"
+#include "CC/unit_logic.h"
+#include "CC/unit_ipc.h"
 #include "log.h"
 
 static volatile unit_order_t order = PATROL;

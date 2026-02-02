@@ -16,12 +16,13 @@
 #include "ipc/semaphores.h"
 #include "ipc/shared.h"
 #include "ipc/ipc_mesq.h"
-#include "unit_ipc.h"
-#include "unit_logic.h"
-#include "unit_stats.h"
-#include "unit_size.h"
+#include "CC/unit_ipc.h"
+#include "CC/unit_logic.h"
+#include "CC/unit_stats.h"
+#include "CC/unit_size.h"
+#include "CC/terminal_tee.h"
+#include "CM/console_manager.h"
 #include "log.h"
-#include "terminal_tee.h"
 
 
 /* Command Center (CC)
@@ -290,6 +291,74 @@ void print_grid(ipc_ctx_t *ctx) {
         sem_unlock(ctx->sem_id, SEM_GLOBAL_LOCK);
 }
 
+/* Handle CM (Console Manager) commands */
+static void handle_cm_command(ipc_ctx_t *ctx) {
+    mq_cm_cmd_t cmd;
+    mq_cm_rep_t response;
+    
+    /* Try to receive CM command (non-blocking) */
+    int ret = mq_try_recv_cm_cmd(ctx->q_req, &cmd);
+    
+    if (ret <= 0) {
+        return;  // No message or error
+    }
+    
+    /* Process command */
+    memset(&response, 0, sizeof(response));
+    response.mtype = cmd.sender;  // Reply to sender
+    response.req_id = cmd.req_id;
+    response.status = 0;
+    
+    LOGI("[CC] Received CM command type=%d req_id=%u from pid=%d", 
+         cmd.cmd, cmd.req_id, cmd.sender);
+    
+    switch (cmd.cmd) {
+        case CM_CMD_FREEZE:
+            snprintf(response.message, sizeof(response.message), 
+                     "Simulation frozen (not fully implemented)");
+            // TODO: Set global freeze flag
+            break;
+            
+        case CM_CMD_UNFREEZE:
+            snprintf(response.message, sizeof(response.message),
+                     "Simulation resumed (not fully implemented)");
+            // TODO: Clear global freeze flag
+            break;
+            
+        case CM_CMD_SPEEDUP:
+            snprintf(response.message, sizeof(response.message),
+                     "Speed increased (not fully implemented)");
+            // TODO: Decrease sleep time
+            break;
+            
+        case CM_CMD_SLOWDOWN:
+            snprintf(response.message, sizeof(response.message),
+                     "Speed decreased (not fully implemented)");
+            // TODO: Increase sleep time
+            break;
+            
+        case CM_CMD_END:
+            snprintf(response.message, sizeof(response.message),
+                     "Shutdown initiated");
+            g_stop = 1;
+            break;
+            
+        default:
+            snprintf(response.message, sizeof(response.message),
+                     "Unknown command type %d", cmd.cmd);
+            response.status = -1;
+            break;
+    }
+    
+    /* Send response */
+    if (mq_send_cm_reply(ctx->q_rep, &response) < 0) {
+        perror("[CC] Failed to send CM response");
+        LOGE("[CC] Failed to send CM response: %s", strerror(errno));
+    } else {
+        LOGD("[CC] Sent CM response: status=%d msg=%s", response.status, response.message);
+    }
+}
+
 
 int main(int argc, char **argv) {
     // atexit(exit_handler);
@@ -298,7 +367,7 @@ int main(int argc, char **argv) {
     const char *battleship = "./battleship";
     const char *squadron = "./squadron";
 
-    const useconds_t tick_us = 1000 * 1000 * 0; /* tick interval */
+    const useconds_t tick_us = 1000 * 1000 * 1; /* tick interval */
 
     for (int i=1; i<argc;i++) {
         if (!strcmp(argv[i], "--ftok") && i+1<argc) ftok_path = argv[++i];
@@ -395,6 +464,9 @@ int main(int argc, char **argv) {
         if (g_stop) break;  // Check immediately after sleep
 
         if (sem_lock_intr(ctx.sem_id, SEM_GLOBAL_LOCK, &g_stop) == -1) break;
+
+        /* Check for CM commands */
+        handle_cm_command(&ctx);
 
         mq_spawn_req_t r;
         while (mq_try_recv_spawn(ctx.q_req, &r) == 1) {
@@ -497,7 +569,7 @@ int main(int argc, char **argv) {
             if (ctx.S->units[id].faction == FACTION_REPUBLIC) c_r++;
             else if (ctx.S->units[id].faction == FACTION_CIS) c_s++;
         }
-        if ((c_r == 0 || c_s == 0) && 1) {
+        if ((c_r == 0 || c_s == 0) && 0) {
             LOGI("Faction elimination detected: Republic=%d CIS=%d", c_r, c_s);
             printf("[CC] Faction elimination detected: Republic=%d CIS=%d\n", c_r, c_s);
             g_stop = 1;

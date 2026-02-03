@@ -1,5 +1,5 @@
-#include "unit_stats.h"
-#include "weapon_stats.h"
+#include "CC/unit_stats.h"
+#include "CC/weapon_stats.h"
 #include "ipc/shared.h"
 
 static const fighter_bay_view_t k_fighter_types(unit_type_t type){

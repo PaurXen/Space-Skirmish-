@@ -1,7 +1,7 @@
 // terminal_tee.c
 #define _GNU_SOURCE
 
-#include "terminal_tee.h"
+#include "CC/terminal_tee.h"
 
 #include <errno.h>
 #include <fcntl.h>

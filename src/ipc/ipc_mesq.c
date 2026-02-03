@@ -78,3 +78,30 @@ int mq_try_recv_order(int qreq, mq_order_t *out) {
     }
     return (n < 0) ? -1 : 1;
 }
+
+int mq_send_cm_cmd(int qreq, const mq_cm_cmd_t *cmd) {
+    return msgsnd(qreq, cmd, sizeof(*cmd) - sizeof(long), IPC_NOWAIT);
+}
+
+int mq_try_recv_cm_cmd(int qreq, mq_cm_cmd_t *out) {
+    ssize_t n = msgrcv(qreq, out, sizeof(*out) - sizeof(long), MSG_CM_CMD, IPC_NOWAIT);
+    if (n < 0 && errno == ENOMSG) return 0;
+    return (n < 0) ? -1 : 1;
+}
+
+int mq_send_cm_reply(int qrep, const mq_cm_rep_t *rep) {
+    return msgsnd(qrep, rep, sizeof(*rep) - sizeof(long), IPC_NOWAIT);
+}
+
+int mq_try_recv_cm_reply(int qrep, mq_cm_rep_t *out) {
+    pid_t me = getpid();
+    ssize_t n = msgrcv(qrep, out, sizeof(*out) - sizeof(long), me, IPC_NOWAIT);
+    if (n < 0 && errno == ENOMSG) return 0;
+    return (n < 0) ? -1 : 1;
+}
+
+int mq_recv_cm_reply_blocking(int qrep, mq_cm_rep_t *out) {
+    pid_t me = getpid();
+    ssize_t n = msgrcv(qrep, out, sizeof(*out) - sizeof(long), me, 0);
+    return (n < 0) ? -1 : 1;
+}

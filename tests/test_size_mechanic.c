@@ -3,7 +3,7 @@
 #include <string.h>
 #include <assert.h>
 
-#include "unit_size.h"
+#include "CC/unit_size.h"
 #include "ipc/shared.h"
 #include "ipc/ipc_context.h"
 

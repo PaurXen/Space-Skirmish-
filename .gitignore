@@ -1,11 +1,14 @@
 # ===== Logs =====
 logs/
 *.log
+
 # ===== Build artifacts =====
 *.o
 command_center
 battleship
 squadron
+console_manager
+launcher
 test
 
 # ===== IPC / runtime files =====

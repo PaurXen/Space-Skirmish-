@@ -24,7 +24,7 @@ battleship: src/CC/battleship.o src/ipc/semaphores.o src/ipc/ipc_context.o src/u
 squadron: src/CC/squadron.o src/ipc/semaphores.o src/ipc/ipc_context.o src/utils.o src/CC/unit_logic.o src/CC/unit_stats.o src/CC/unit_ipc.o src/CC/weapon_stats.o src/ipc/ipc_mesq.o src/CC/unit_size.o $(ERROR_HANDLER_OBJ)
 	$(CC) $(CFLAGS) -o squadron $^ -lm
 
-ui: src/UI/ui_main.o src/UI/ui_map.o src/ipc/ipc_context.o src/ipc/semaphores.o src/ipc/ipc_mesq.o src/utils.o $(ERROR_HANDLER_OBJ)
+ui: src/UI/ui_main.o src/UI/ui_map.o src/UI/ui_ust.o src/ipc/ipc_context.o src/ipc/semaphores.o src/ipc/ipc_mesq.o src/utils.o $(ERROR_HANDLER_OBJ)
 	$(CC) $(CFLAGS) -o ui $^ -lncurses -lpthread
 
 src/%.o: src/%.c

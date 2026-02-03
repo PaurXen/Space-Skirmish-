@@ -12,6 +12,7 @@
 
 #include "UI/ui.h"
 #include "UI/ui_map.h"
+#include "UI/ui_ust.h"
 #include "ipc/ipc_context.h"
 #include "log.h"
 
@@ -215,6 +216,16 @@ int main(int argc, char **argv) {
         return 1;
     }
     
+    /* Start UST thread */
+    if (pthread_create(&g_ui_ctx.ust_thread_id, NULL, ui_ust_thread, &g_ui_ctx) != 0) {
+        fprintf(stderr, "[UI] Failed to create UST thread\n");
+        g_ui_ctx.stop = 1;
+        pthread_join(g_ui_ctx.map_thread_id, NULL);
+        ui_cleanup(&g_ui_ctx);
+        ipc_detach(&ctx);
+        return 1;
+    }
+    
     /* Main loop - handle input and refresh */
     while (!g_ui_ctx.stop) {
         int ch = getch();
@@ -232,6 +243,7 @@ int main(int argc, char **argv) {
     
     /* Wait for threads to finish */
     pthread_join(g_ui_ctx.map_thread_id, NULL);
+    pthread_join(g_ui_ctx.ust_thread_id, NULL);
     
     /* Cleanup */
     ui_cleanup(&g_ui_ctx);

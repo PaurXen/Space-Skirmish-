@@ -10,6 +10,7 @@ squadron
 console_manager
 launcher
 test
+'tee'
 
 # ===== IPC / runtime files =====
 ipc.key

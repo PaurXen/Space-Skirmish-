@@ -22,7 +22,7 @@
 #include "CC/unit_logic.h"
 #include "CC/unit_stats.h"
 #include "CC/unit_size.h"
-#include "CC/terminal_tee.h"
+#include "tee/terminal_tee.h"
 #include "CM/console_manager.h"
 #include "CC/scenario.h"
 #include "log.h"
@@ -466,9 +466,16 @@ int main(int argc, char **argv) {
 
 
     
-    pid_t tee_pid = start_terminal_tee(run_dir);
-    if (tee_pid == -1) {
+    int tee_pipe = start_terminal_tee(run_dir);
+    if (tee_pipe == -1) {
         fprintf(stderr, "Failed to start terminal tee\n");
+    } else {
+        // Redirect stdout and stderr to tee pipe
+        setvbuf(stdout, NULL, _IOLBF, 0);
+        setvbuf(stderr, NULL, _IOLBF, 0);
+        dup2(tee_pipe, STDOUT_FILENO);
+        dup2(tee_pipe, STDERR_FILENO);
+        close(tee_pipe);  // Close original fd after dup2
     }
 
     if (log_init("CC", 0) == -1) {
@@ -846,8 +853,13 @@ send_spawn_reply:
 
     LOGI("[CC] reaped %d children total", waited);
     printf("[CC] reaped %d children total\n", waited);
-    fflush(stdout);
-
+    fflush(stdout);    fflush(stderr);
+    
+    // Close stdout/stderr to send EOF to tee worker
+    // This must happen AFTER all children are reaped (they inherited these fds)
+    close(STDOUT_FILENO);
+    close(STDERR_FILENO);
+    
     /* cleanup IPC and exit */
     LOGD("[CC] Detaching and destroying IPC objects");
     if (ipc_detach(&ctx) == -1) {

@@ -12,7 +12,7 @@ all: launcher command_center console_manager battleship squadron
 launcher: src/launcher.o $(ERROR_HANDLER_OBJ) src/utils.o
 	$(CC) $(CFLAGS) -o launcher $^
 
-command_center: src/CC/command_center.o src/ipc/semaphores.o src/ipc/ipc_context.o src/utils.o src/CC/terminal_tee.o src/ipc/ipc_mesq.o src/CC/unit_logic.o src/CC/unit_ipc.o src/CC/unit_stats.o src/CC/unit_size.o src/CC/weapon_stats.o src/CC/scenario.o $(ERROR_HANDLER_OBJ)
+command_center: src/CC/command_center.o src/ipc/semaphores.o src/ipc/ipc_context.o src/utils.o src/tee/terminal_tee.o src/ipc/ipc_mesq.o src/CC/unit_logic.o src/CC/unit_ipc.o src/CC/unit_stats.o src/CC/unit_size.o src/CC/weapon_stats.o src/CC/scenario.o $(ERROR_HANDLER_OBJ)
 	$(CC) $(CFLAGS) -o command_center $^ -lpthread
 
 console_manager: src/CM/console_manager.o src/ipc/ipc_context.o src/ipc/ipc_mesq.o src/ipc/semaphores.o src/utils.o $(ERROR_HANDLER_OBJ)
@@ -36,5 +36,8 @@ src/CC/%.o: src/CC/%.c
 src/CM/%.o: src/CM/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+src/tee/%.o: src/tee/%.c
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 clean:
-	rm -f launcher command_center console_manager battleship squadron src/*.o src/ipc/*.o src/CC/*.o src/CM/*.o
+	rm -f launcher command_center console_manager battleship squadron src/*.o src/ipc/*.o src/CC/*.o src/CM/*.o src/tee/*.o

@@ -6,6 +6,7 @@
 #include <signal.h>
 #include <errno.h>
 
+#include "error_handler.h"
 #include "CM/console_manager.h"
 #include "ipc/ipc_context.h"
 #include "ipc/ipc_mesq.h"

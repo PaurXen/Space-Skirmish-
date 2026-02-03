@@ -1,10 +1,18 @@
 #include "ipc/ipc_mesq.h"
+#include "error_handler.h"
 #include <sys/ipc.h>
 #include <sys/msg.h>
 #include <errno.h>
+#include <unistd.h>
 
 static inline int mq_open_or_create(key_t key) {
-    return msgget(key, 0666 | IPC_CREAT);
+    int qid = msgget(key, 0666 | IPC_CREAT);
+    if (qid == -1) {
+        perror("[IPC] msgget");
+        fprintf(stderr, "[IPC] Failed to open/create message queue (key=0x%x): %s (errno=%d)\n",
+                key, strerror(errno), errno);
+    }
+    return qid;
 }
 
 int mq_req_id(void) { return mq_open_or_create(MQ_KEY_REQ); }

@@ -13,6 +13,7 @@
 #include <errno.h>
 #include <pthread.h>
 
+#include "error_handler.h"
 #include "ipc/ipc_context.h"
 #include "ipc/semaphores.h"
 #include "ipc/shared.h"
@@ -69,7 +70,11 @@ static void make_run_dir(char *out, size_t out_sz) {
     pid_t pid = getpid();
 
     /* ensure base logs/ exists */
-    (void)mkdir("logs", 0755);
+    if (mkdir("logs", 0755) == -1 && errno != EEXIST) {
+        perror("[CC] mkdir logs");
+        fprintf(stderr, "[CC] Failed to create logs directory: %s (errno=%d)\n",
+                strerror(errno), errno);
+    }
 
     snprintf(out, out_sz,
              "logs/run_%04d-%02d-%02d_%02d-%02d-%02d_pid%d",
@@ -77,7 +82,11 @@ static void make_run_dir(char *out, size_t out_sz) {
              tm.tm_hour, tm.tm_min, tm.tm_sec,
              (int)pid);
 
-    (void)mkdir(out, 0755);
+    if (mkdir(out, 0755) == -1 && errno != EEXIST) {
+        perror("[CC] mkdir run directory");
+        fprintf(stderr, "[CC] Failed to create run directory '%s': %s (errno=%d)\n",
+                out, strerror(errno), errno);
+    }
 }
 
 /* Allocate the next unit id from shared state under the global lock.
@@ -141,8 +150,9 @@ static pid_t spawn_unit(ipc_ctx_t *ctx, const char *exe_path,
 {
     pid_t pid = fork();
     if (pid == -1) {
-        LOGE("[CC] fork failed for unit_id=%u: %s", unit_id, strerror(errno));
-        perror("fork");
+        perror("[CC] fork unit");
+        LOGE("[CC] Failed to fork unit_id=%u: %s (errno=%d)", 
+             unit_id, strerror(errno), errno);
         return -1;
     }
 
@@ -165,8 +175,9 @@ static pid_t spawn_unit(ipc_ctx_t *ctx, const char *exe_path,
               "--commander", commander_s,
             NULL);
         /* execl only returns on error */
-        fprintf(stderr, "[CC child] execl(%s) failed: %s\n", exe_path, strerror(errno));
-        perror("execl");
+        perror("[CC child] execl unit");
+        fprintf(stderr, "[CC child] Failed to exec '%s': %s (errno=%d)\n", 
+                exe_path, strerror(errno), errno);
         _exit(1);
     }
     register_unit(ctx, unit_id, pid, faction, type, pos);
@@ -187,8 +198,8 @@ static pid_t spawn_squadron(ipc_ctx_t *ctx,
 ){
     uint16_t unit_id = alloc_unit_id(ctx);
     if (unit_id == 0) {
-        LOGE("[CC] Failed to allocate unit ID for new squadron");
-        fprintf(stderr, "[CC] Failed to allocate unit ID for new squadron\n");
+        HANDLE_APP_ERROR(ERR_ERROR, "spawn_squadron", ERR_UNIT_NOT_FOUND, 
+                        "Failed to allocate unit ID - max units reached");
         return -1;
     }
 

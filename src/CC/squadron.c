@@ -19,6 +19,7 @@
 #include "CC/unit_logic.h"
 #include "CC/unit_ipc.h"
 #include "log.h"
+#include "error_handler.h"
 
 static volatile unit_order_t order = PATROL;
 
@@ -372,9 +373,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--commander") && i + 1 < argc) commander = (unit_id_t)atoi(argv[++i]);
     }
 
-    if (unit_id <= 0 || unit_id > MAX_UNITS) {
-        LOGE("[SQ] invalid unit_id");
-        fprintf(stderr, "[SQ] invalid unit_id\n");
+    if (validate_int_range(unit_id, 1, MAX_UNITS, "squadron:validate_unit_id") != 0) {
         return 1;
     }
 
@@ -396,9 +395,7 @@ int main(int argc, char **argv) {
     //RNG per process
     srand((unsigned)(time(NULL) ^ (getpid() << 16)));
 
-    if (ipc_attach(&ctx, ftok_path) == -1) {
-        LOGE("[SQ] ipc_attach failed: %s", strerror(errno));
-        perror("ipc_attach");
+    if (CHECK_SYS_CALL_NONFATAL(ipc_attach(&ctx, ftok_path), "squadron:ipc_attach") == -1) {
         return 1;
     }
     g_ctx = &ctx;
@@ -410,9 +407,7 @@ int main(int argc, char **argv) {
     atexit(log_close);
 
     // ensure registry entry is correct
-    if (sem_lock(ctx.sem_id, SEM_GLOBAL_LOCK) == -1) {
-        LOGE("[SQ %u] failed to acquire initial lock: %s", unit_id, strerror(errno));
-        perror("sem_lock");
+    if (CHECK_SYS_CALL_NONFATAL(sem_lock(ctx.sem_id, SEM_GLOBAL_LOCK), "squadron:sem_lock_init") == -1) {
         cleanup_and_exit(1);
     }
     ctx.S->units[unit_id].pid = getpid();
@@ -516,9 +511,8 @@ int main(int argc, char **argv) {
                 dist2(pos, primary_target), st.hp, st.sp, faction);
         }
 
-        if (sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1) == -1) {
-            LOGE("sem_post_retry(TICK_DONE)");
-            perror("sem_post_retry(TICK_DONE)");
+        if (CHECK_SYS_CALL_NONFATAL(sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1), 
+                                     "squadron:sem_post_TICK_DONE") == -1) {
             break;
         }
     }

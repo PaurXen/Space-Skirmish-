@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include "ipc/ipc_context.h"
 #include "ipc/semaphores.h"
+#include "error_handler.h"
 
 #include <errno.h>
 #include <string.h>
@@ -10,6 +11,7 @@
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <sys/sem.h>
+#include <sys/msg.h>
 
 /*
  * IPC helper: create/attach/destroy SysV shared memory + semaphore set
@@ -37,14 +39,23 @@
 
 static key_t make_key(const char *path, int proj_id) {
     key_t k = ftok(path, proj_id);
-    return k;   // caller checks -1
+    if (k == -1) {
+        perror("[IPC] ftok");
+        fprintf(stderr, "[IPC] Failed to generate key from '%s' with proj_id '%c': %s (errno=%d)\n",
+                path, proj_id, strerror(errno), errno);
+    }
+    return k;
 }
 
 /* Ensure the ftok key file exists (create if needed). Returns 0 on success. */
 static int esure_ftok_file(const char *path) {
-    FILE *f = fopen(path, "a");
-    if (!f) return -1;
-    fclose(f);
+    FILE *f = CHECK_NULL_NONFATAL(fopen(path, "a"), "ipc:fopen_ftok_file");
+    if (!f) {
+        return -1;
+    }
+    if (CHECK_SYS_CALL_NONFATAL(fclose(f), "ipc:fclose_ftok_file") != 0) {
+        /* Already logged, continue */
+    }
     return 0;
 }
 
@@ -90,24 +101,30 @@ int ipc_create(ipc_ctx_t *ctx, const char *ftok_path) {
     if (req_key == -1 || rep_key == -1) return -1;
 
     // create-or-open
-    ctx->q_req = msgget(req_key, IPC_CREAT | 0600);
-    ctx->q_rep = msgget(rep_key, IPC_CREAT | 0600);
-    if (ctx->q_req == -1 || ctx->q_rep == -1) return -1;
+    ctx->q_req = CHECK_SYS_CALL_NONFATAL(msgget(req_key, IPC_CREAT | 0600), "ipc:msgget_req_initial");
+    ctx->q_rep = CHECK_SYS_CALL_NONFATAL(msgget(rep_key, IPC_CREAT | 0600), "ipc:msgget_rep_initial");
+    if (ctx->q_req == -1 || ctx->q_rep == -1) {
+        return -1;
+    }
 
     // optional but recommended for "fresh run": clear stale queues
     msgctl(ctx->q_req, IPC_RMID, NULL);
     msgctl(ctx->q_rep, IPC_RMID, NULL);
-    ctx->q_req = msgget(req_key, IPC_CREAT | 0600);
-    ctx->q_rep = msgget(rep_key, IPC_CREAT | 0600);
-    if (ctx->q_req == -1 || ctx->q_rep == -1) return -1;
+    ctx->q_req = CHECK_SYS_CALL_NONFATAL(msgget(req_key, IPC_CREAT | 0600), "ipc:msgget_req_recreate");
+    ctx->q_rep = CHECK_SYS_CALL_NONFATAL(msgget(rep_key, IPC_CREAT | 0600), "ipc:msgget_rep_recreate");
+    if (ctx->q_req == -1 || ctx->q_rep == -1) {
+        return -1;
+    }
 
     key_t shm_key = make_key(ftok_path, 'S');
     key_t sem_key = make_key(ftok_path, 'M');
     if (shm_key == -1 || sem_key == -1) return -1;
     
     // 1) Semaphores: create-or-open, then RESET ALWAYS for fresh run
-    ctx->sem_id = semget(sem_key, SEM_COUNT, IPC_CREAT | 0600);
-    if (ctx->sem_id == -1) return -1;
+    ctx->sem_id = CHECK_SYS_CALL_NONFATAL(semget(sem_key, SEM_COUNT, IPC_CREAT | 0600), "ipc:semget");
+    if (ctx->sem_id == -1) {
+        return -1;
+    }
 
     union semun u;
     unsigned short vals[SEM_COUNT];
@@ -115,21 +132,40 @@ int ipc_create(ipc_ctx_t *ctx, const char *ftok_path) {
     vals[SEM_TICK_START]  = 0;
     vals[SEM_TICK_DONE]   = 0;
     u.array = vals;
-    if (semctl(ctx->sem_id, 0, SETALL, u) == -1) return -1;
+    if (CHECK_SYS_CALL_NONFATAL(semctl(ctx->sem_id, 0, SETALL, u), "ipc:semctl_SETALL") == -1) {
+        return -1;
+    }
 
     // 2) SHM: create-or-open, attach, RESET ALWAYS for fresh run
-    ctx->shm_id = shmget(shm_key, sizeof(shm_state_t), IPC_CREAT | 0600);
-    if (ctx->shm_id == -1) return -1;
+    ctx->shm_id = CHECK_SYS_CALL_NONFATAL(shmget(shm_key, sizeof(shm_state_t), IPC_CREAT | 0600), "ipc:shmget");
+    if (ctx->shm_id == -1) {
+        return -1;
+    }
 
     ctx->S = (shm_state_t*)shmat(ctx->shm_id, NULL, 0);
-    if (ctx->S == (void*)-1) return -1;
+    if (ctx->S == (void*)-1) {
+        perror("[IPC] shmat");
+        fprintf(stderr, "[IPC] Failed to attach shared memory: %s (errno=%d)\n",
+                strerror(errno), errno);
+        return -1;
+    }
 
     // safe reset under lock (now sem exists)
-    sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK);
+    if (sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK) == -1) {
+        perror("[IPC] sem_lock in ipc_create");
+        fprintf(stderr, "[IPC] Failed to acquire global lock: %s (errno=%d)\n",
+                strerror(errno), errno);
+        return -1;
+    }
     memset(ctx->S, 0, sizeof(*ctx->S));
     ctx->S->magic = SHM_MAGIC;
     ctx->S->next_unit_id = 1;
-    sem_unlock(ctx->sem_id, SEM_GLOBAL_LOCK);
+    if (sem_unlock(ctx->sem_id, SEM_GLOBAL_LOCK) == -1) {
+        perror("[IPC] sem_unlock in ipc_create");
+        fprintf(stderr, "[IPC] Failed to release global lock: %s (errno=%d)\n",
+                strerror(errno), errno);
+        return -1;
+    }
 
     return 0;
 }
@@ -154,7 +190,12 @@ int ipc_attach(ipc_ctx_t *ctx, const char *ftok_path) {
 
     ctx->q_req = msgget(req_key, 0600);
     ctx->q_rep = msgget(rep_key, 0600);
-    if (ctx->q_req == -1 || ctx->q_rep == -1) return -1;
+    if (ctx->q_req == -1 || ctx->q_rep == -1) {
+        perror("[IPC] msgget in ipc_attach");
+        fprintf(stderr, "[IPC] Failed to attach to message queues: %s (errno=%d)\n",
+                strerror(errno), errno);
+        return -1;
+    }
 
 
     key_t shm_key = make_key(ftok_path, 'S');
@@ -162,13 +203,28 @@ int ipc_attach(ipc_ctx_t *ctx, const char *ftok_path) {
     if (shm_key == -1 || sem_key == -1) return -1;
 
     ctx->shm_id = shmget(shm_key, sizeof(shm_state_t), 0600);
-    if (ctx->shm_id == -1) return -1;
+    if (ctx->shm_id == -1) {
+        perror("[IPC] shmget in ipc_attach");
+        fprintf(stderr, "[IPC] Failed to get shared memory segment: %s (errno=%d)\n",
+                strerror(errno), errno);
+        return -1;
+    }
 
     ctx->S = (shm_state_t*)shmat(ctx->shm_id, NULL, 0);
-    if (ctx->S == (void*)-1) return -1;
+    if (ctx->S == (void*)-1) {
+        perror("[IPC] shmat in ipc_attach");
+        fprintf(stderr, "[IPC] Failed to attach shared memory: %s (errno=%d)\n",
+                strerror(errno), errno);
+        return -1;
+    }
 
     ctx->sem_id = semget(sem_key, SEM_COUNT, 0600);
-    if (ctx->sem_id == -1) return -1;
+    if (ctx->sem_id == -1) {
+        perror("[IPC] semget in ipc_attach");
+        fprintf(stderr, "[IPC] Failed to get semaphore set: %s (errno=%d)\n",
+                strerror(errno), errno);
+        return -1;
+    }
 
     // sanity check: ensure the creator initialized the segment
     if (ctx->S->magic != SHM_MAGIC) {
@@ -186,7 +242,12 @@ int ipc_attach(ipc_ctx_t *ctx, const char *ftok_path) {
 int ipc_detach(ipc_ctx_t *ctx) {
     int ok = 0;
     if (ctx->S && ctx->S != (void*)-1) {
-        if (shmdt(ctx->S) == -1) ok = -1;
+        if (shmdt(ctx->S) == -1) {
+            perror("[IPC] shmdt");
+            fprintf(stderr, "[IPC] Failed to detach shared memory: %s (errno=%d)\n",
+                    strerror(errno), errno);
+            ok = -1;
+        }
         ctx->S = (void*)-1;
     }
     return ok;
@@ -201,20 +262,40 @@ int ipc_destroy(ipc_ctx_t* ctx) {
     int ok =0;
 
     if (ctx->q_req != -1) { 
-        if (msgctl(ctx->q_req, IPC_RMID, NULL) == -1) ok = -1;
+        if (msgctl(ctx->q_req, IPC_RMID, NULL) == -1) {
+            perror("[IPC] msgctl IPC_RMID q_req");
+            fprintf(stderr, "[IPC] Failed to remove request message queue: %s (errno=%d)\n",
+                    strerror(errno), errno);
+            ok = -1;
+        }
         ctx->q_req = -1; 
     }
     if (ctx->q_rep != -1) {
-        if (msgctl(ctx->q_rep, IPC_RMID, NULL) == -1) ok = -1;
+        if (msgctl(ctx->q_rep, IPC_RMID, NULL) == -1) {
+            perror("[IPC] msgctl IPC_RMID q_rep");
+            fprintf(stderr, "[IPC] Failed to remove reply message queue: %s (errno=%d)\n",
+                    strerror(errno), errno);
+            ok = -1;
+        }
         ctx->q_rep = -1;
     }
 
     if (ctx->shm_id != -1) {
-            if (shmctl(ctx->shm_id, IPC_RMID, NULL) == -1) ok = -1;
+            if (shmctl(ctx->shm_id, IPC_RMID, NULL) == -1) {
+                perror("[IPC] shmctl IPC_RMID");
+                fprintf(stderr, "[IPC] Failed to remove shared memory: %s (errno=%d)\n",
+                        strerror(errno), errno);
+                ok = -1;
+            }
             ctx->shm_id = -1;
     }
     if (ctx->sem_id != -1) {
-            if (semctl(ctx->sem_id, 0, IPC_RMID) == -1) ok = -1;
+            if (semctl(ctx->sem_id, 0, IPC_RMID) == -1) {
+                perror("[IPC] semctl IPC_RMID");
+                fprintf(stderr, "[IPC] Failed to remove semaphore set: %s (errno=%d)\n",
+                        strerror(errno), errno);
+                ok = -1;
+            }
             ctx->sem_id = -1;
     }
     return ok;

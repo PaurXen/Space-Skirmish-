@@ -4,21 +4,24 @@ CFLAGS=-O2 -Wall -Wextra -std=c11 -Iinclude
 IPC_SRCS=src/ipc/semaphores.c src/ipc/ipc_context.c
 IPC_OBJS=$(IPC_SRCS:.c=.o)
 
+# Error handler object - used by all binaries (depends on utils.o for logging)
+ERROR_HANDLER_OBJ=src/error_handler.o
+
 all: launcher command_center console_manager battleship squadron
 
-launcher: src/launcher.o
+launcher: src/launcher.o $(ERROR_HANDLER_OBJ) src/utils.o
 	$(CC) $(CFLAGS) -o launcher $^
 
-command_center: src/CC/command_center.o src/ipc/semaphores.o src/ipc/ipc_context.o src/utils.o src/CC/terminal_tee.o src/ipc/ipc_mesq.o src/CC/unit_logic.o src/CC/unit_ipc.o src/CC/unit_stats.o src/CC/unit_size.o src/CC/weapon_stats.o src/CC/scenario.o
+command_center: src/CC/command_center.o src/ipc/semaphores.o src/ipc/ipc_context.o src/utils.o src/CC/terminal_tee.o src/ipc/ipc_mesq.o src/CC/unit_logic.o src/CC/unit_ipc.o src/CC/unit_stats.o src/CC/unit_size.o src/CC/weapon_stats.o src/CC/scenario.o $(ERROR_HANDLER_OBJ)
 	$(CC) $(CFLAGS) -o command_center $^ -lpthread
 
-console_manager: src/CM/console_manager.o src/ipc/ipc_context.o src/ipc/ipc_mesq.o src/ipc/semaphores.o src/utils.o
+console_manager: src/CM/console_manager.o src/ipc/ipc_context.o src/ipc/ipc_mesq.o src/ipc/semaphores.o src/utils.o $(ERROR_HANDLER_OBJ)
 	$(CC) $(CFLAGS) -o console_manager $^
 
-battleship: src/CC/battleship.o src/ipc/semaphores.o src/ipc/ipc_context.o src/utils.o src/CC/unit_logic.o src/CC/unit_stats.o src/CC/unit_ipc.o src/CC/weapon_stats.o src/ipc/ipc_mesq.o src/CC/unit_size.o
+battleship: src/CC/battleship.o src/ipc/semaphores.o src/ipc/ipc_context.o src/utils.o src/CC/unit_logic.o src/CC/unit_stats.o src/CC/unit_ipc.o src/CC/weapon_stats.o src/ipc/ipc_mesq.o src/CC/unit_size.o $(ERROR_HANDLER_OBJ)
 	$(CC) $(CFLAGS) -o battleship $^
 
-squadron: src/CC/squadron.o src/ipc/semaphores.o src/ipc/ipc_context.o src/utils.o src/CC/unit_logic.o src/CC/unit_stats.o src/CC/unit_ipc.o src/CC/weapon_stats.o src/ipc/ipc_mesq.o src/CC/unit_size.o
+squadron: src/CC/squadron.o src/ipc/semaphores.o src/ipc/ipc_context.o src/utils.o src/CC/unit_logic.o src/CC/unit_stats.o src/CC/unit_ipc.o src/CC/weapon_stats.o src/ipc/ipc_mesq.o src/CC/unit_size.o $(ERROR_HANDLER_OBJ)
 	$(CC) $(CFLAGS) -o squadron $^ -lm
 
 src/%.o: src/%.c

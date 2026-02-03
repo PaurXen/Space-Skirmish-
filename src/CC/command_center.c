@@ -25,6 +25,7 @@
 #include "tee/terminal_tee.h"
 #include "CM/console_manager.h"
 #include "CC/scenario.h"
+#include "UI/ui_map.h"
 #include "log.h"
 
 
@@ -416,6 +417,18 @@ static void* cm_thread_func(void* arg) {
     while (!g_stop) {
         handle_cm_command(ctx);
         
+        /* Handle UI map requests */
+        mq_ui_map_req_t ui_req;
+        while (mq_try_recv_ui_map_req(ctx->q_req, &ui_req) == 1) {
+            /* Send current grid snapshot to UI - UI will read from shared memory */
+            mq_ui_map_rep_t ui_rep;
+            ui_rep.mtype = ui_req.sender;  // Reply to UI's pid
+            ui_rep.tick = ctx->S->ticks;
+            ui_rep.ready = 1;
+            
+            mq_send_ui_map_rep(ctx->q_rep, &ui_rep);
+        }
+        
         /* Small sleep to avoid busy-waiting */
         usleep(10000);  /* 10ms */
     }
@@ -745,7 +758,7 @@ send_spawn_reply:
 
         cleanup_dead_units(&ctx);
 
-        
+        /* UI requests are handled by CM thread, no need to push snapshots */
         
         if ((t % 1) == 0) {
             LOGI("ticks=%u alive_units=%u", t, alive);

@@ -7,7 +7,7 @@
 #define MQ_KEY_REP 0x12346
 #define MQ_ORDER_MTYPE_OFFSET 100000
 
-enum { MSG_SPAWN = 1, MSG_COMMANDER_REQ = 2, MSG_COMMANDER_REP = 3, MSG_DAMAGE = 4, MSG_ORDER = 5, MSG_CM_CMD = 6 };
+enum { MSG_SPAWN = 1, MSG_COMMANDER_REQ = 2, MSG_COMMANDER_REP = 3, MSG_DAMAGE = 4, MSG_ORDER = 5, MSG_CM_CMD = 6, MSG_UI_MAP_REQ = 7, MSG_UI_MAP_REP = 8 };
 
 typedef enum {
     CM_CMD_FREEZE,
@@ -106,3 +106,20 @@ int mq_try_recv_cm_cmd(int qreq, mq_cm_cmd_t *out);
 int mq_send_cm_reply(int qrep, const mq_cm_rep_t *rep);
 int mq_try_recv_cm_reply(int qrep, mq_cm_rep_t *out);
 int mq_recv_cm_reply_blocking(int qrep, mq_cm_rep_t *out);
+
+/* UI Map snapshot request/response */
+typedef struct {
+    long mtype;          // MSG_UI_MAP_REQ
+    pid_t sender;        // UI pid
+} mq_ui_map_req_t;
+
+typedef struct {
+    long mtype;          // MSG_UI_MAP_REP
+    uint32_t tick;
+    int ready;           // 1 = grid snapshot ready in shared memory
+} mq_ui_map_rep_t;
+
+int mq_send_ui_map_req(int qreq, const mq_ui_map_req_t *req);
+int mq_try_recv_ui_map_req(int qreq, mq_ui_map_req_t *out);
+int mq_send_ui_map_rep(int qrep, const mq_ui_map_rep_t *rep);
+int mq_recv_ui_map_rep_blocking(int qrep, mq_ui_map_rep_t *out);

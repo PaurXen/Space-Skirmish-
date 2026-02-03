@@ -7,7 +7,7 @@ IPC_OBJS=$(IPC_SRCS:.c=.o)
 # Error handler object - used by all binaries (depends on utils.o for logging)
 ERROR_HANDLER_OBJ=src/error_handler.o
 
-all: launcher command_center console_manager battleship squadron
+all: launcher command_center console_manager battleship squadron ui
 
 launcher: src/launcher.o $(ERROR_HANDLER_OBJ) src/utils.o
 	$(CC) $(CFLAGS) -o launcher $^
@@ -24,6 +24,9 @@ battleship: src/CC/battleship.o src/ipc/semaphores.o src/ipc/ipc_context.o src/u
 squadron: src/CC/squadron.o src/ipc/semaphores.o src/ipc/ipc_context.o src/utils.o src/CC/unit_logic.o src/CC/unit_stats.o src/CC/unit_ipc.o src/CC/weapon_stats.o src/ipc/ipc_mesq.o src/CC/unit_size.o $(ERROR_HANDLER_OBJ)
 	$(CC) $(CFLAGS) -o squadron $^ -lm
 
+ui: src/UI/ui_main.o src/UI/ui_map.o src/ipc/ipc_context.o src/ipc/semaphores.o src/ipc/ipc_mesq.o src/utils.o $(ERROR_HANDLER_OBJ)
+	$(CC) $(CFLAGS) -o ui $^ -lncurses -lpthread
+
 src/%.o: src/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
@@ -39,5 +42,8 @@ src/CM/%.o: src/CM/%.c
 src/tee/%.o: src/tee/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+src/UI/%.o: src/UI/%.c
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 clean:
-	rm -f launcher command_center console_manager battleship squadron src/*.o src/ipc/*.o src/CC/*.o src/CM/*.o src/tee/*.o
+	rm -f launcher command_center console_manager battleship squadron ui src/*.o src/ipc/*.o src/CC/*.o src/CM/*.o src/tee/*.o src/UI/*.o

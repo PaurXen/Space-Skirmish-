@@ -5,9 +5,10 @@
 #include <sys/types.h>
 
 /* Grid dimensions */
-#define M 80
+#define M 120
 #define N 40
-
+/* Obstacle marker in grid */
+#define OBSTACLE_MARKER -2
 /* limits */
 #define MAX_UNITS 64
 #define MAX_WEAPONS 4

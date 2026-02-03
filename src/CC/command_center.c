@@ -23,6 +23,7 @@
 #include "CC/unit_size.h"
 #include "CC/terminal_tee.h"
 #include "CM/console_manager.h"
+#include "CC/scenario.h"
 #include "log.h"
 
 
@@ -282,7 +283,9 @@ void print_grid(ipc_ctx_t *ctx) {
             printf("%d\t", i);
             for (int j = 0; j < M; j++) {
                 int16_t t = ctx->S->grid[j][i];
-                if (t == 0) {
+                if (t == OBSTACLE_MARKER) {
+                    printf("\x1b[90m#\x1b[0m");  // Gray obstacle
+                } else if (t == 0) {
                     printf(".");
                 } else if (0 < t && t < MAX_UNITS)  {
                     uint8_t faction = ctx->S->units[t].faction;
@@ -417,11 +420,13 @@ int main(int argc, char **argv) {
     const char *ftok_path = "./ipc.key";
     const char *battleship = "./battleship";
     const char *squadron = "./squadron";
+    const char *scenario_name = NULL;
 
     for (int i=1; i<argc;i++) {
         if (!strcmp(argv[i], "--ftok") && i+1<argc) ftok_path = argv[++i];
         else if (!strcmp(argv[i], "--battleship") && i+1<argc) battleship = argv[++i];
         else if (!strcmp(argv[i], "--squadron") && i+1<argc) squadron = argv[++i];
+        else if (!strcmp(argv[i], "--scenario") && i+1<argc) scenario_name = argv[++i];
     }
     
     /* Set global paths for CM thread */
@@ -461,6 +466,26 @@ int main(int argc, char **argv) {
     atexit(log_close);
 
     
+    /* Load scenario */
+    scenario_t scenario;
+    if (scenario_name) {
+        char scenario_path[256];
+        snprintf(scenario_path, sizeof(scenario_path), "scenarios/%s.conf", scenario_name);
+        if (scenario_load(scenario_path, &scenario) != 0) {
+            fprintf(stderr, "[CC] Failed to load scenario '%s', using default\n", scenario_name);
+            scenario_default(&scenario);
+        } else {
+            printf("[CC] Loaded scenario: %s\n", scenario.name);
+        }
+    } else {
+        scenario_default(&scenario);
+    }
+    
+    /* Generate placements if needed */
+    if (scenario.unit_count == 0) {
+        scenario_generate_placements(&scenario);
+    }
+    
     if (sem_lock(ctx.sem_id, SEM_GLOBAL_LOCK) == -1) {
         fprintf(stderr, "[CC] failed to acquire initial lock: %s\n", strerror(errno));
         perror("sem_lock");
@@ -468,32 +493,60 @@ int main(int argc, char **argv) {
         ipc_destroy(&ctx);
         return 1;
     }
-    LOGD("TESTU #1 - allocating units");
-    /* Allocate a few unit ids and spawn battleship processes */
-    uint16_t u1 = alloc_unit_id(&ctx);
-    uint16_t u2 = alloc_unit_id(&ctx);
-    uint16_t u3 = alloc_unit_id(&ctx);
-    uint16_t u4 = alloc_unit_id(&ctx);
-    if (!u1 || !u2 || !u3 || !u4) {
-        // if (!u1 || !u3) {
-            LOGE("[CC] Failed to allocate units: u1=%u u2=%u u3=%u u4=%u", u1, u2, u3, u4);
-            fprintf(stderr, "[CC] Failed to allocate units\n");
-            sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
-            ipc_detach(&ctx);
-            ipc_destroy(&ctx);
-            return 1;
-        }
-    LOGD("TESTU #2 - spawening units");
     
-    spawn_unit(&ctx, battleship, u1, FACTION_REPUBLIC, TYPE_CARRIER, (point_t){5, 5}, ftok_path, 0);
-    spawn_unit(&ctx, battleship, u2, FACTION_REPUBLIC, TYPE_CARRIER,   (point_t){5, N-5}, ftok_path, 0);
-    spawn_unit(&ctx, battleship, u3, FACTION_CIS,      TYPE_CARRIER, (point_t){M-5, 5}, ftok_path, 0);
-    spawn_unit(&ctx, battleship, u4, FACTION_CIS,      TYPE_CARRIER,   (point_t){M-5, N-5}, ftok_path, 0);
+    /* Place obstacles on grid */
+    for (int i = 0; i < scenario.obstacle_count; i++) {
+        int x = scenario.obstacles[i].x;
+        int y = scenario.obstacles[i].y;
+        if (x >= 0 && x < M && y >= 0 && y < N) {
+            ctx.S->grid[x][y] = OBSTACLE_MARKER;
+            LOGD("[CC] Placed obstacle at (%d,%d)", x, y);
+        }
+    }
+    
+    /* Spawn units from scenario */
+    int spawned_count = 0;
+    for (int i = 0; i < scenario.unit_count; i++) {
+        unit_placement_t *u = &scenario.units[i];
+        uint16_t unit_id = alloc_unit_id(&ctx);
+        
+        if (unit_id == 0) {
+            LOGE("[CC] Failed to allocate unit ID for scenario unit %d", i);
+            continue;
+        }
+        
+        /* Check if position is blocked by obstacle */
+        if (ctx.S->grid[u->x][u->y] == OBSTACLE_MARKER) {
+            LOGW("[CC] Unit placement at (%d,%d) blocked by obstacle, skipping", u->x, u->y);
+            continue;
+        }
+        
+        /* Choose correct executable */
+        const char *exe_path;
+        if (u->type == TYPE_FIGHTER || u->type == TYPE_BOMBER || u->type == TYPE_ELITE) {
+            exe_path = squadron;
+        } else {
+            exe_path = battleship;
+        }
+        
+        point_t pos = {u->x, u->y};
+        pid_t pid = spawn_unit(&ctx, exe_path, unit_id, u->faction, u->type, pos, ftok_path, 0);
+        
+        if (pid > 0) {
+            spawned_count++;
+            LOGI("[CC] Spawned unit %d: type=%d faction=%d at (%d,%d)", 
+                 unit_id, u->type, u->faction, u->x, u->y);
+        } else {
+            LOGE("[CC] Failed to spawn unit %d", unit_id);
+        }
+    }
 
     sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
 
-    LOGI("[CC] shm_id=%d sem_id=%d spawned 4 battleships. Ctrl+C to stop.",ctx.shm_id, ctx.sem_id);
-    printf("[CC] shm_id=%d sem_id=%d spawned 4 battleships. Ctrl+C to stop.\n",ctx.shm_id, ctx.sem_id);
+    LOGI("[CC] shm_id=%d sem_id=%d spawned %d units from scenario '%s'. Ctrl+C to stop.",
+         ctx.shm_id, ctx.sem_id, spawned_count, scenario.name);
+    printf("[CC] shm_id=%d sem_id=%d spawned %d units from scenario '%s'. Ctrl+C to stop.\n",
+           ctx.shm_id, ctx.sem_id, spawned_count, scenario.name);
 
     /* Start CM handler thread */
     pthread_t cm_thread;

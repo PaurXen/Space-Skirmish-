@@ -91,8 +91,24 @@ int log_init(const char *role, int16_t unit_id) {
         strncpy(g_run_dir, rd, sizeof(g_run_dir) - 1);
         g_run_dir[sizeof(g_run_dir) - 1] = '\0';
     } else {
-        strncpy(g_run_dir, "logs", sizeof(g_run_dir) - 1);
-        g_run_dir[sizeof(g_run_dir) - 1] = '\0';
+        /* Try to read from CC's run_dir file (for CM/UI started independently) */
+        FILE *f = fopen("/tmp/skirmish_run_dir.txt", "r");
+        if (f) {
+            if (fgets(g_run_dir, sizeof(g_run_dir), f)) {
+                /* Remove trailing newline */
+                size_t len = strlen(g_run_dir);
+                if (len > 0 && g_run_dir[len-1] == '\n') {
+                    g_run_dir[len-1] = '\0';
+                }
+            } else {
+                strncpy(g_run_dir, "logs", sizeof(g_run_dir) - 1);
+                g_run_dir[sizeof(g_run_dir) - 1] = '\0';
+            }
+            fclose(f);
+        } else {
+            strncpy(g_run_dir, "logs", sizeof(g_run_dir) - 1);
+            g_run_dir[sizeof(g_run_dir) - 1] = '\0';
+        }
     }
 
     ensure_dir_exists("logs");     /* base */

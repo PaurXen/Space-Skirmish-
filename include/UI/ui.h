@@ -5,22 +5,20 @@
 #include <pthread.h>
 #include "ipc/ipc_context.h"
 
-/* UI window layout (4 quadrants):
+/* UI window layout:
  * +----------------+----------------+
  * |   MAP (TL)     |   UST (TR)     |
  * |                |                |
  * +----------------+----------------+
- * |   UCM (BL)     |   STD (BR)     |
- * |                |                |
- * +----------------+----------------+
+ * |        STD (Bottom - Full)      |
+ * +------------------------------------+
  */
 
 typedef struct {
     /* ncurses windows */
     WINDOW *map_win;    // Top-left: grid map display
     WINDOW *ust_win;    // Top-right: unit stats table
-    WINDOW *ucm_win;    // Bottom-left: console manager terminal
-    WINDOW *std_win;    // Bottom-right: standard output log
+    WINDOW *std_win;    // Bottom: standard output log (full width)
     
     /* IPC context */
     ipc_ctx_t *ctx;
@@ -50,3 +48,10 @@ void ui_cleanup(ui_context_t *ui_ctx);
 
 /* Refresh all windows */
 void ui_refresh_all(ui_context_t *ui_ctx);
+
+/* Thread entry points */
+void *ui_std_thread(void *arg);
+
+
+/* Thread entry points */
+void *ui_std_thread(void *arg);

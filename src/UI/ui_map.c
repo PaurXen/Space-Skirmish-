@@ -26,6 +26,11 @@ static void render_map(ui_context_t *ui_ctx, unit_id_t grid[M][N], uint32_t tick
     pthread_mutex_lock(&ui_ctx->ui_lock);
     
     WINDOW *win = ui_ctx->map_win;
+    if (!win) {
+        pthread_mutex_unlock(&ui_ctx->ui_lock);
+        return;
+    }
+    
     int win_h, win_w;
     getmaxyx(win, win_h, win_w);
     

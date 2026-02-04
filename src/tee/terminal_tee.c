@@ -75,8 +75,11 @@ static void tee_worker(int pipe_fd, const char *log_path, const char *ui_pipe_pa
     // Main loop - read from pipe, write to log and terminal/UI
     char buffer[BUFFER_SIZE];
     ssize_t bytes;
+    int read_count = 0;
 
     while ((bytes = read(pipe_fd, buffer, sizeof(buffer))) > 0) {
+        read_count++;
+        
         // Write to log file
         ssize_t written = 0;
         while (written < bytes) {
@@ -92,11 +95,24 @@ static void tee_worker(int pipe_fd, const char *log_path, const char *ui_pipe_pa
             while (written < bytes) {
                 ssize_t w = write(ui_fd, buffer + written, bytes - written);
                 if (w <= 0) {
-                    // UI pipe closed - fall back to terminal
+                    // UI pipe closed (EPIPE) or broken - fall back to terminal immediately
                     use_ui = 0;
                     close(ui_fd);
                     ui_fd = -1;
+                    
+                    // Open terminal for output
                     term_fd = open("/dev/tty", O_WRONLY);
+                    if (term_fd == -1) {
+                        term_fd = STDOUT_FILENO;
+                    }
+                    
+                    // Write remaining data to terminal
+                    ssize_t term_written = 0;
+                    while (term_written < bytes) {
+                        ssize_t tw = write(term_fd, buffer + term_written, bytes - term_written);
+                        if (tw <= 0) break;
+                        term_written += tw;
+                    }
                     break;
                 }
                 written += w;
@@ -111,19 +127,33 @@ static void tee_worker(int pipe_fd, const char *log_path, const char *ui_pipe_pa
             }
         }
 
-        // Periodically check if UI pipe appeared
-        if (!use_ui && access(ui_pipe_path, F_OK) == 0) {
-            ui_fd = open(ui_pipe_path, O_WRONLY | O_NONBLOCK);
-            if (ui_fd != -1) {
-                use_ui = 1;
-                int flags = fcntl(ui_fd, F_GETFL);
-                fcntl(ui_fd, F_SETFL, flags & ~O_NONBLOCK);
-                
-                // Close terminal fd
-                if (term_fd != -1 && term_fd != STDOUT_FILENO) {
-                    close(term_fd);
+        // Every 10 reads, check if UI pipe appeared or disappeared
+        if (read_count % 1 == 0) {
+            if (!use_ui && access(ui_pipe_path, F_OK) == 0) {
+                // UI pipe appeared - try to connect
+                ui_fd = open(ui_pipe_path, O_WRONLY | O_NONBLOCK);
+                if (ui_fd != -1) {
+                    use_ui = 1;
+                    int flags = fcntl(ui_fd, F_GETFL);
+                    fcntl(ui_fd, F_SETFL, flags & ~O_NONBLOCK);
+                    
+                    // Close terminal fd
+                    if (term_fd != -1 && term_fd != STDOUT_FILENO) {
+                        close(term_fd);
+                    }
+                    term_fd = -1;
                 }
-                term_fd = -1;
+            } else if (use_ui && access(ui_pipe_path, F_OK) != 0) {
+                // UI pipe disappeared - UI was closed
+                use_ui = 0;
+                if (ui_fd != -1) {
+                    close(ui_fd);
+                    ui_fd = -1;
+                }
+                term_fd = open("/dev/tty", O_WRONLY);
+                if (term_fd == -1) {
+                    term_fd = STDOUT_FILENO;
+                }
             }
         }
     }
@@ -147,7 +177,7 @@ int start_terminal_tee(const char *run_dir) {
     char log_path[600];
     char ui_pipe_path[600];
     snprintf(log_path, sizeof(log_path), "%s/ALL.term.log", run_dir);
-    snprintf(ui_pipe_path, sizeof(ui_pipe_path), "%s/ui_stdout.fifo", run_dir);
+    snprintf(ui_pipe_path, sizeof(ui_pipe_path), "/tmp/skirmish_std.fifo");
 
     // Double fork to detach tee worker completely
     pid_t first = fork();

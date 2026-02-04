@@ -15,6 +15,7 @@ typedef enum {
     CM_CMD_TICKSPEED_GET,
     CM_CMD_TICKSPEED_SET,
     CM_CMD_SPAWN,
+    CM_CMD_GRID,
     CM_CMD_END
 } cm_command_type_t;
 
@@ -69,6 +70,7 @@ typedef struct {
     pid_t sender;         // CM pid
     uint32_t req_id;      // correlation id
     int32_t tick_speed_ms; // for TICKSPEED_SET command
+    int32_t grid_enabled;  // for GRID command: -1=query, 0=off, 1=on
     /* Spawn parameters */
     unit_type_t spawn_type;   // unit type to spawn
     faction_t spawn_faction;  // faction
@@ -82,6 +84,7 @@ typedef struct {
     int16_t status;       // 0 ok, <0 fail
     char message[128];    // status message
     int32_t tick_speed_ms; // for TICKSPEED_GET response
+    int32_t grid_enabled;  // for GRID query response
 } mq_cm_rep_t;
 
 int mq_try_recv_spawn(int qreq, mq_spawn_req_t *out);

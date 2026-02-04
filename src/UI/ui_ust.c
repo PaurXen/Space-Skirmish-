@@ -44,6 +44,11 @@ static void render_ust(ui_context_t *ui_ctx) {
     pthread_mutex_lock(&ui_ctx->ui_lock);
     
     WINDOW *win = ui_ctx->ust_win;
+    if (!win) {
+        pthread_mutex_unlock(&ui_ctx->ui_lock);
+        return;
+    }
+    
     int win_h, win_w;
     getmaxyx(win, win_h, win_w);
     

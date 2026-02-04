@@ -5,11 +5,16 @@
 #include <unistd.h>
 #include <signal.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/select.h>
+#include <stdarg.h>
 
 #include "error_handler.h"
 #include "CM/console_manager.h"
 #include "ipc/ipc_context.h"
 #include "ipc/ipc_mesq.h"
+#include "log.h"
 
 /* Console Manager (CM)
  *
@@ -22,12 +27,34 @@
 
 static volatile sig_atomic_t g_stop = 0;
 static uint32_t g_next_req_id = 1;
+static int g_ui_output_fd = -1;  // Global for relay output
 
 /* Signal handler */
 static void on_term(int sig) {
     (void)sig;
     g_stop = 1;
     printf("\n[CM] Shutting down...\n");
+}
+
+/* Relay printf - write to both stdout and UI if connected */
+static void relay_printf(const char *format, ...) {
+    va_list args1, args2;
+    va_start(args1, format);
+    
+    /* Always write to stdout */
+    va_copy(args2, args1);
+    vprintf(format, args1);
+    fflush(stdout);
+    va_end(args1);
+    
+    /* Also write to UI if connected */
+    if (g_ui_output_fd >= 0) {
+        char buffer[4096];
+        vsnprintf(buffer, sizeof(buffer), format, args2);
+        ssize_t written = write(g_ui_output_fd, buffer, strlen(buffer));
+        (void)written;  // Suppress unused result warning
+    }
+    va_end(args2);
 }
 
 /* Parse command line input */
@@ -111,27 +138,48 @@ static int parse_command(const char *line, mq_cm_cmd_t *cmd) {
         cmd->spawn_y = y_val;
         cmd->cmd = CM_CMD_SPAWN;  // For internal tracking
         return 0;
+    } else if (strcmp(first_word, "grid") == 0 || strcmp(first_word, "g") == 0) {
+        /* Parse optional on/off argument */
+        char grid_arg[16];
+        if (sscanf(buffer, "%*s %15s", grid_arg) == 1) {
+            if (strcmp(grid_arg, "1") == 0 || strcmp(grid_arg, "T") == 0 || 
+                strcmp(grid_arg, "on") == 0 || strcmp(grid_arg, "true") == 0) {
+                cmd->grid_enabled = 1;
+            } else if (strcmp(grid_arg, "0") == 0 || strcmp(grid_arg, "F") == 0 || 
+                       strcmp(grid_arg, "off") == 0 || strcmp(grid_arg, "false") == 0) {
+                cmd->grid_enabled = 0;
+            } else {
+                relay_printf("Usage: grid [1/T/0/F]\n");
+                return -1;
+            }
+        } else {
+            /* No argument - query current value */
+            cmd->grid_enabled = -1;
+        }
+        cmd->cmd = CM_CMD_GRID;
+        return 0;
     } else if (strcmp(first_word, "end") == 0) {
         cmd->cmd = CM_CMD_END;
         return 0;
     } else if (strcmp(first_word, "help") == 0) {
-        printf("\nAvailable commands:\n");
-        printf("  freeze / f                      - Pause simulation\n");
-        printf("  unfreeze / uf                   - Resume simulation\n");
-        printf("  tickspeed [ms] / ts             - Get/set tick speed (0-1000000 ms)\n");
-        printf("  spawn <type> <faction> <x> <y>  - Spawn unit at position\n");
-        printf("  sp <type> <faction> <x> <y>     - Alias for spawn\n");
-        printf("    Types: carrier, destroyer, flagship, fighter, bomber, elite (or 1-6)\n");
-        printf("    Factions: republic, cis (or 1-2)\n");
-        printf("  end                             - End simulation\n");
-        printf("  help                            - Show this help\n");
-        printf("  quit                            - Exit console manager\n\n");
+        relay_printf("\nAvailable commands:\n");
+        relay_printf("  freeze / f                      - Pause simulation\n");
+        relay_printf("  unfreeze / uf                   - Resume simulation\n");
+        relay_printf("  tickspeed [ms] / ts             - Get/set tick speed (0-1000000 ms)\n");
+        relay_printf("  grid [on|off] / g               - Toggle/set grid display\n");
+        relay_printf("  spawn <type> <faction> <x> <y>  - Spawn unit at position\n");
+        relay_printf("  sp <type> <faction> <x> <y>     - Alias for spawn\n");
+        relay_printf("    Types: carrier, destroyer, flagship, fighter, bomber, elite (or 1-6)\n");
+        relay_printf("    Factions: republic, cis (or 1-2)\n");
+        relay_printf("  end                             - End simulation\n");
+        relay_printf("  help                            - Show this help\n");
+        relay_printf("  quit                            - Exit console manager\n\n");
         return -1;  /* Don't send */
     } else if (strcmp(first_word, "quit") == 0 || strcmp(first_word, "exit") == 0) {
         g_stop = 1;
         return -1;  /* Don't send */
     } else {
-        printf("Unknown command: %s (type 'help' for available commands)\n", first_word);
+        relay_printf("Unknown command: %s (type 'help' for available commands)\n", first_word);
         return -1;  /* Don't send */
     }
 }
@@ -212,7 +260,7 @@ static int send_and_wait(ipc_ctx_t *ctx, mq_cm_cmd_t *cmd) {
         return -1;
     }
     
-    printf("[CM] Command sent, waiting for response...\n");
+    relay_printf("[CM] Command sent, waiting for response...\n");
     
     /* Wait for response (blocking) */
     int ret = mq_recv_cm_reply_blocking(ctx->q_rep, &reply);
@@ -223,20 +271,20 @@ static int send_and_wait(ipc_ctx_t *ctx, mq_cm_cmd_t *cmd) {
     
     /* Check correlation ID */
     if (reply.req_id != cmd->req_id) {
-        fprintf(stderr, "[CM] Reply ID mismatch (expected %u, got %u)\n", 
+        relay_printf("[CM] Reply ID mismatch (expected %u, got %u)\n", 
                 cmd->req_id, reply.req_id);
         return -1;
     }
     
     /* Display result */
     if (reply.status == 0) {
-        printf("[CM] ✓ Success: %s\n", reply.message);
+        relay_printf("[CM] ✓ Success: %s\n", reply.message);
         /* For TICKSPEED_GET, also show the value clearly */
         if (cmd->cmd == CM_CMD_TICKSPEED_GET) {
-            printf("[CM] Tick speed: %d ms\n", reply.tick_speed_ms);
+            relay_printf("[CM] Tick speed: %d ms\n", reply.tick_speed_ms);
         }
     } else {
-        printf("[CM] ✗ Error: %s (status=%d)\n", reply.message, reply.status);
+        relay_printf("[CM] ✗ Error: %s (status=%d)\n", reply.message, reply.status);
     }
     
     return reply.status;
@@ -246,6 +294,10 @@ static int send_and_wait(ipc_ctx_t *ctx, mq_cm_cmd_t *cmd) {
 
 int main(int argc, char **argv) {
     ipc_ctx_t ctx;
+    
+    /* Initialize logging */
+    log_init("CM", 0);
+    LOGI("[CM] Console Manager starting (PID %d)...", getpid());
     
     /* Set up signal handlers */
     signal(SIGINT, on_term);
@@ -258,39 +310,142 @@ int main(int argc, char **argv) {
     
     if (ipc_attach(&ctx, ftok_path) < 0) {
         fprintf(stderr, "[CM] Failed to attach to IPC (is CC running?)\n");
+        LOGE("[CM] Failed to attach to IPC");
         return 1;
     }
     
+    LOGI("[CM] Connected to IPC (qreq=%d, qrep=%d)", ctx.q_req, ctx.q_rep);
     printf("[CM] Connected to IPC (qreq=%d, qrep=%d)\n", ctx.q_req, ctx.q_rep);
-    printf("\n=== Space Skirmish Console Manager ===\n");
-    printf("Type 'help' for available commands\n\n");
     
-    /* Main command loop */
+    /* Create FIFOs for UI communication */
+    const char *cm_to_ui = "/tmp/skirmish_cm_to_ui.fifo";
+    const char *ui_to_cm = "/tmp/skirmish_ui_to_cm.fifo";
+    
+    unlink(cm_to_ui);
+    unlink(ui_to_cm);
+    
+    if (mkfifo(cm_to_ui, 0600) < 0 && errno != EEXIST) {
+        perror("[CM] mkfifo cm_to_ui");
+    }
+    if (mkfifo(ui_to_cm, 0600) < 0 && errno != EEXIST) {
+        perror("[CM] mkfifo ui_to_cm");
+    }
+    
+    int ui_input_fd = -1;
+    int ui_output_fd = -1;
+    
+    /* Try to open UI FIFOs in non-blocking mode */
+    ui_output_fd = open(cm_to_ui, O_WRONLY | O_NONBLOCK);
+    if (ui_output_fd >= 0) {
+        printf("[CM] UI connected!\n");
+        g_ui_output_fd = ui_output_fd;
+        ui_input_fd = open(ui_to_cm, O_RDONLY | O_NONBLOCK);
+    } else if (errno == ENXIO) {
+        printf("[CM] No UI detected, using terminal mode\n");
+    }
+    
+    relay_printf("\n=== Space Skirmish Console Manager ===\n");
+    relay_printf("Type 'help' for available commands\n\n");
+    relay_printf("CM> ");
+    fflush(stdout);
+    
+    /* Main command loop - select between stdin and UI */
     char line[256];
     while (!g_stop) {
-        printf("CM> ");
-        fflush(stdout);
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        FD_SET(STDIN_FILENO, &readfds);
         
-        if (fgets(line, sizeof(line), stdin) == NULL) {
-            break;  /* EOF or error */
+        int maxfd = STDIN_FILENO;
+        if (ui_input_fd >= 0) {
+            FD_SET(ui_input_fd, &readfds);
+            if (ui_input_fd > maxfd) maxfd = ui_input_fd;
         }
         
-        mq_cm_cmd_t cmd;
-        memset(&cmd, 0, sizeof(cmd));
+        struct timeval tv = {1, 0};  // 1 second timeout
+        int ret = select(maxfd + 1, &readfds, NULL, NULL, &tv);
         
-        if (parse_command(line, &cmd) == 0) {
-            /* Valid command parsed */
-            send_and_wait(&ctx, &cmd);
-            
-            /* Check if it was an END command */
-            if (cmd.cmd == CM_CMD_END) {
-                printf("[CM] Simulation ended. Exiting...\n");
+        if (ret < 0) {
+            if (errno == EINTR) continue;
+            perror("[CM] select");
+            break;
+        }
+        
+        if (ret == 0) {
+            /* Timeout - try to reconnect UI if disconnected */
+            if (ui_output_fd < 0) {
+                ui_output_fd = open(cm_to_ui, O_WRONLY | O_NONBLOCK);
+                if (ui_output_fd >= 0) {
+                    printf("[CM] UI connected!\n");
+                    g_ui_output_fd = ui_output_fd;
+                    ui_input_fd = open(ui_to_cm, O_RDONLY | O_NONBLOCK);
+                }
+            }
+            continue;
+        }
+        
+        /* Check stdin */
+        if (FD_ISSET(STDIN_FILENO, &readfds)) {
+            if (fgets(line, sizeof(line), stdin) == NULL) {
                 break;
+            }
+            
+            mq_cm_cmd_t cmd;
+            memset(&cmd, 0, sizeof(cmd));
+            
+            if (parse_command(line, &cmd) == 0) {
+                send_and_wait(&ctx, &cmd);
+                
+                if (cmd.cmd == CM_CMD_END) {
+                    relay_printf("[CM] Simulation ended. Exiting...\n");
+                    break;
+                }
+            }
+            
+            /* Print prompt for next command */
+            relay_printf("CM> ");
+            fflush(stdout);
+        }
+        
+        /* Check UI FIFO */
+        if (ui_input_fd >= 0 && FD_ISSET(ui_input_fd, &readfds)) {
+            ssize_t n = read(ui_input_fd, line, sizeof(line) - 1);
+            if (n <= 0) {
+                relay_printf("[CM] UI disconnected\n");
+                close(ui_input_fd);
+                close(ui_output_fd);
+                ui_input_fd = -1;
+                ui_output_fd = -1;
+                g_ui_output_fd = -1;
+            } else {
+                line[n] = '\0';
+                line[strcspn(line, "\n")] = '\0';
+                
+                if (line[0] != '\0') {
+                    mq_cm_cmd_t cmd;
+                    memset(&cmd, 0, sizeof(cmd));
+                    
+                    if (parse_command(line, &cmd) == 0) {
+                        send_and_wait(&ctx, &cmd);
+                        
+                        if (cmd.cmd == CM_CMD_END) {
+                            relay_printf("[CM] Simulation ended. Exiting...\n");
+                            break;
+                        }
+                    }
+                    
+                    /* Don't print prompt for UI commands - they don't see it */
+                }
             }
         }
     }
     
     /* Cleanup */
+    if (ui_output_fd >= 0) close(ui_output_fd);
+    if (ui_input_fd >= 0) close(ui_input_fd);
+    unlink(cm_to_ui);
+    unlink(ui_to_cm);
+    
     ipc_detach(&ctx);
     printf("[CM] Console Manager exiting.\n");
     

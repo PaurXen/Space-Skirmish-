@@ -16,10 +16,10 @@ void scenario_default(scenario_t *out) {
     
     /* Default: 4 carriers at corners (current behavior) */
     out->placement_mode = PLACEMENT_CORNERS;
-    out->republic_carriers = 2;
+    out->republic_carriers = 1;
     out->republic_destroyers = 0;
     out->republic_fighters = 0;
-    out->cis_carriers = 2;
+    out->cis_carriers = 0;
     out->cis_destroyers = 0;
     out->cis_fighters = 0;
 }

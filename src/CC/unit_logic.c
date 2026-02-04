@@ -1,12 +1,15 @@
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 
+#include "error_handler.h"
 #include "CC/unit_logic.h"
 #include "CC/weapon_stats.h"
 #include "CC/unit_ipc.h"
 #include "CC/unit_size.h"
 #include "ipc/shared.h"
+#include "log.h"
 
 typedef struct { int16_t dx, dy; } offset_t;
 
@@ -143,7 +146,12 @@ int radar_pick_random_point_in_circle(
     if (max_pts <= 0) return 0;
 
     point_t *cands = (point_t*)malloc((size_t)max_pts * sizeof(point_t));
-    if (!cands) return 0;
+    if (!cands) {
+        perror("[UnitLogic] malloc cands");
+        LOGE("[UnitLogic] Failed to allocate memory for %d points: %s (errno=%d)",
+             max_pts, strerror(errno), errno);
+        return 0;
+    }
 
     int n = 0;
     for (int y = cy - r; y <= cy + r; y++) {

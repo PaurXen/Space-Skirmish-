@@ -13,6 +13,7 @@
 #include <errno.h>
 #include <pthread.h>
 
+#include "error_handler.h"
 #include "ipc/ipc_context.h"
 #include "ipc/semaphores.h"
 #include "ipc/shared.h"
@@ -21,9 +22,10 @@
 #include "CC/unit_logic.h"
 #include "CC/unit_stats.h"
 #include "CC/unit_size.h"
-#include "CC/terminal_tee.h"
+#include "tee/terminal_tee.h"
 #include "CM/console_manager.h"
 #include "CC/scenario.h"
+#include "UI/ui_map.h"
 #include "log.h"
 
 
@@ -41,7 +43,8 @@
 static volatile sig_atomic_t g_stop = 0;
 static volatile sig_atomic_t g_frozen = 0;
 static volatile int g_tick_speed_ms = 1000;  /* tick speed in milliseconds */
-static pthread_mutex_t g_cm_mutex = PTHREAD_MUTEX_INITIALIZER;  /* protects g_frozen and g_tick_speed_ms */
+static volatile int g_grid_enabled = 1;      /* grid display: 1 = ON, 0 = OFF */
+static pthread_mutex_t g_cm_mutex = PTHREAD_MUTEX_INITIALIZER;  /* protects g_frozen, g_tick_speed_ms, and g_grid_enabled */
 
 /* Global paths for CM thread to access */
 static const char *g_battleship_path = "./battleship";
@@ -60,6 +63,48 @@ static void exit_handler(void) {
     printf("[CC] Exit handler called, setting g_stop=1\n");
 }
 
+/* Check if CC is already running by examining PID file.
+ * Returns 0 if no other instance, -1 if another CC is running. */
+static int check_single_instance(void) {
+    const char *pidfile = "/tmp/skirmish_cc.pid";
+    int fd = open(pidfile, O_RDWR | O_CREAT, 0644);
+    if (fd == -1) {
+        perror("[CC] open pidfile");
+        return -1;
+    }
+
+    /* Try to acquire exclusive lock */
+    struct flock fl;
+    fl.l_type = F_WRLCK;
+    fl.l_whence = SEEK_SET;
+    fl.l_start = 0;
+    fl.l_len = 0;  /* lock entire file */
+
+    if (fcntl(fd, F_SETLK, &fl) == -1) {
+        if (errno == EACCES || errno == EAGAIN) {
+            /* Another CC is running */
+            close(fd);
+            return -1;
+        }
+        perror("[CC] fcntl F_SETLK");
+        close(fd);
+        return -1;
+    }
+
+    /* Write our PID to the file */
+    if (ftruncate(fd, 0) == -1) {
+        perror("[CC] ftruncate pidfile");
+    }
+    char pid_str[32];
+    snprintf(pid_str, sizeof(pid_str), "%d\n", (int)getpid());
+    if (write(fd, pid_str, strlen(pid_str)) == -1) {
+        perror("[CC] write pidfile");
+    }
+
+    /* Keep fd open to maintain lock - it will be released when process exits */
+    return 0;
+}
+
 /* Create a per-run directory name under ./logs with timestamp+pid and ensure it exists. */
 static void make_run_dir(char *out, size_t out_sz) {
     time_t now = time(NULL);
@@ -69,7 +114,11 @@ static void make_run_dir(char *out, size_t out_sz) {
     pid_t pid = getpid();
 
     /* ensure base logs/ exists */
-    (void)mkdir("logs", 0755);
+    if (mkdir("logs", 0755) == -1 && errno != EEXIST) {
+        perror("[CC] mkdir logs");
+        fprintf(stderr, "[CC] Failed to create logs directory: %s (errno=%d)\n",
+                strerror(errno), errno);
+    }
 
     snprintf(out, out_sz,
              "logs/run_%04d-%02d-%02d_%02d-%02d-%02d_pid%d",
@@ -77,7 +126,23 @@ static void make_run_dir(char *out, size_t out_sz) {
              tm.tm_hour, tm.tm_min, tm.tm_sec,
              (int)pid);
 
-    (void)mkdir(out, 0755);
+    if (mkdir(out, 0755) == -1 && errno != EEXIST) {
+        perror("[CC] mkdir run directory");
+        fprintf(stderr, "[CC] Failed to create run directory '%s': %s (errno=%d)\n",
+                out, strerror(errno), errno);
+    }
+
+    /* Write run directory path to a known location so CM/UI can use it */
+    const char *rundir_file = "/tmp/skirmish_run_dir.txt";
+    FILE *f = fopen(rundir_file, "w");
+    if (f) {
+        fprintf(f, "%s\n", out);
+        fclose(f);
+    } else {
+        perror("[CC] fopen run_dir file");
+        fprintf(stderr, "[CC] Failed to write run_dir to '%s': %s (errno=%d)\n",
+                rundir_file, strerror(errno), errno);
+    }
 }
 
 /* Allocate the next unit id from shared state under the global lock.
@@ -141,8 +206,9 @@ static pid_t spawn_unit(ipc_ctx_t *ctx, const char *exe_path,
 {
     pid_t pid = fork();
     if (pid == -1) {
-        LOGE("[CC] fork failed for unit_id=%u: %s", unit_id, strerror(errno));
-        perror("fork");
+        perror("[CC] fork unit");
+        LOGE("[CC] Failed to fork unit_id=%u: %s (errno=%d)", 
+             unit_id, strerror(errno), errno);
         return -1;
     }
 
@@ -165,8 +231,9 @@ static pid_t spawn_unit(ipc_ctx_t *ctx, const char *exe_path,
               "--commander", commander_s,
             NULL);
         /* execl only returns on error */
-        fprintf(stderr, "[CC child] execl(%s) failed: %s\n", exe_path, strerror(errno));
-        perror("execl");
+        perror("[CC child] execl unit");
+        fprintf(stderr, "[CC child] Failed to exec '%s': %s (errno=%d)\n", 
+                exe_path, strerror(errno), errno);
         _exit(1);
     }
     register_unit(ctx, unit_id, pid, faction, type, pos);
@@ -187,8 +254,8 @@ static pid_t spawn_squadron(ipc_ctx_t *ctx,
 ){
     uint16_t unit_id = alloc_unit_id(ctx);
     if (unit_id == 0) {
-        LOGE("[CC] Failed to allocate unit ID for new squadron");
-        fprintf(stderr, "[CC] Failed to allocate unit ID for new squadron\n");
+        HANDLE_APP_ERROR(ERR_ERROR, "spawn_squadron", ERR_UNIT_NOT_FOUND, 
+                        "Failed to allocate unit ID - max units reached");
         return -1;
     }
 
@@ -373,6 +440,26 @@ static void handle_cm_command(ipc_ctx_t *ctx) {
             snprintf(response.message, sizeof(response.message),
                      "Spawn command should use MSG_SPAWN protocol");
             response.status = -1;
+            break;
+            
+        case CM_CMD_GRID:
+            pthread_mutex_lock(&g_cm_mutex);
+            if (cmd.grid_enabled == -1) {
+                /* Query current value */
+                response.grid_enabled = g_grid_enabled;
+                snprintf(response.message, sizeof(response.message),
+                         "Grid display is %s", g_grid_enabled ? "ON" : "OFF");
+                LOGI("[CC] Grid display query: %s", g_grid_enabled ? "ON" : "OFF");
+            } else {
+                /* Set value */
+                g_grid_enabled = (cmd.grid_enabled != 0);
+                response.grid_enabled = g_grid_enabled;
+                snprintf(response.message, sizeof(response.message),
+                         "Grid display %s", g_grid_enabled ? "enabled" : "disabled");
+                LOGI("[CC] Grid display %s", g_grid_enabled ? "enabled" : "disabled");
+            }
+            pthread_mutex_unlock(&g_cm_mutex);
+            break;
             
         case CM_CMD_END:
             snprintf(response.message, sizeof(response.message),
@@ -405,6 +492,18 @@ static void* cm_thread_func(void* arg) {
     while (!g_stop) {
         handle_cm_command(ctx);
         
+        /* Handle UI map requests */
+        mq_ui_map_req_t ui_req;
+        while (mq_try_recv_ui_map_req(ctx->q_req, &ui_req) == 1) {
+            /* Send current grid snapshot to UI - UI will read from shared memory */
+            mq_ui_map_rep_t ui_rep;
+            ui_rep.mtype = ui_req.sender;  // Reply to UI's pid
+            ui_rep.tick = ctx->S->ticks;
+            ui_rep.ready = 1;
+            
+            mq_send_ui_map_rep(ctx->q_rep, &ui_rep);
+        }
+        
         /* Small sleep to avoid busy-waiting */
         usleep(10000);  /* 10ms */
     }
@@ -429,6 +528,13 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--scenario") && i+1<argc) scenario_name = argv[++i];
     }
     
+    /* Check that only one CC instance is running */
+    if (check_single_instance() == -1) {
+        fprintf(stderr, "[CC] Another command_center is already running.\n");
+        fprintf(stderr, "[CC] Only one instance can run at a time.\n");
+        return 1;
+    }
+
     /* Set global paths for CM thread */
     g_battleship_path = battleship;
     g_squadron_path = squadron;
@@ -455,9 +561,16 @@ int main(int argc, char **argv) {
 
 
     
-    pid_t tee_pid = start_terminal_tee(run_dir);
-    if (tee_pid == -1) {
+    int tee_pipe = start_terminal_tee(run_dir);
+    if (tee_pipe == -1) {
         fprintf(stderr, "Failed to start terminal tee\n");
+    } else {
+        // Redirect stdout and stderr to tee pipe
+        setvbuf(stdout, NULL, _IOLBF, 0);
+        setvbuf(stderr, NULL, _IOLBF, 0);
+        dup2(tee_pipe, STDOUT_FILENO);
+        dup2(tee_pipe, STDERR_FILENO);
+        close(tee_pipe);  // Close original fd after dup2
     }
 
     if (log_init("CC", 0) == -1) {
@@ -723,11 +836,12 @@ send_spawn_reply:
         // printf("[CC] got all\n");
         //             fflush(stdout);
 
-        print_grid(&ctx);
+        if (g_grid_enabled)
+            print_grid(&ctx);
 
         cleanup_dead_units(&ctx);
 
-        
+        /* UI requests are handled by CM thread, no need to push snapshots */
         
         if ((t % 1) == 0) {
             LOGI("ticks=%u alive_units=%u", t, alive);
@@ -835,8 +949,13 @@ send_spawn_reply:
 
     LOGI("[CC] reaped %d children total", waited);
     printf("[CC] reaped %d children total\n", waited);
-    fflush(stdout);
-
+    fflush(stdout);    fflush(stderr);
+    
+    // Close stdout/stderr to send EOF to tee worker
+    // This must happen AFTER all children are reaped (they inherited these fds)
+    close(STDOUT_FILENO);
+    close(STDERR_FILENO);
+    
     /* cleanup IPC and exit */
     LOGD("[CC] Detaching and destroying IPC objects");
     if (ipc_detach(&ctx) == -1) {

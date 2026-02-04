@@ -18,6 +18,7 @@
 #include "CC/unit_logic.h"
 #include "CC/unit_ipc.h"
 #include "log.h"
+#include "error_handler.h"
 
 static volatile unit_order_t order = PATROL;
 
@@ -315,9 +316,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--commander") && i + 1 < argc) ++i; // ignore for battleships
     }
 
-    if (unit_id == 0 || unit_id > MAX_UNITS) {
-        LOGE("[BS] invalid unit_id");
-        fprintf(stderr, "[BS] invalid unit_id\n");
+    if (validate_int_range(unit_id, 1, MAX_UNITS, "battleship:validate_unit_id") != 0) {
         return 1;
     }
 
@@ -326,7 +325,7 @@ int main(int argc, char **argv) {
     struct sigaction sa1;
     memset(&sa1, 0, sizeof(sa1));
     sa1.sa_handler = on_term;
-    sigaction(SIGTERM, &sa1, NULL);
+    CHECK_SYS_CALL_NONFATAL(sigaction(SIGTERM, &sa1, NULL), "battleship:sigaction_SIGTERM");
 
     // damage payload
     struct sigaction sa2;
@@ -334,7 +333,7 @@ int main(int argc, char **argv) {
     sa2.sa_handler = on_damage;
     sigemptyset(&sa2.sa_mask);
     sa2.sa_flags = 0;
-    sigaction(SIGRTMAX, &sa2, NULL);
+    CHECK_SYS_CALL_NONFATAL(sigaction(SIGRTMAX, &sa2, NULL), "battleship:sigaction_SIGRTMAX");
 
     // units ignore SIGINT; only CC handles Ctrl+C and sends SIGTERM
     signal(SIGINT, SIG_IGN);
@@ -342,9 +341,7 @@ int main(int argc, char **argv) {
     // RNG per process
     srand((unsigned)(time(NULL) ^ (getpid() << 16)));
 
-    if (ipc_attach(&ctx, ftok_path) == -1) {
-        LOGE("[BS] ipc_attach failed: %s", strerror(errno));
-        perror("ipc_attach");
+    if (CHECK_SYS_CALL_NONFATAL(ipc_attach(&ctx, ftok_path), "battleship:ipc_attach") == -1) {
         return 1;
     }
     g_ctx = &ctx;
@@ -352,9 +349,7 @@ int main(int argc, char **argv) {
 
 
     // ensure registry entry is correct
-    if (sem_lock(ctx.sem_id, SEM_GLOBAL_LOCK) == -1) {
-        LOGE("[BS %u] failed to acquire initial lock: %s", unit_id, strerror(errno));
-        perror("sem_lock");
+    if (CHECK_SYS_CALL_NONFATAL(sem_lock(ctx.sem_id, SEM_GLOBAL_LOCK), "battleship:sem_lock_init") == -1) {
         cleanup_and_exit(1);
     }
     ctx.S->units[unit_id].pid = getpid();
@@ -512,9 +507,8 @@ int main(int argc, char **argv) {
         // fflush(stdout);
 
                 // notify CC done
-        if (sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1) == -1) {
-            LOGE("sem_post_retry(TICK_DONE)");
-            perror("sem_post_retry(TICK_DONE)");
+        if (CHECK_SYS_CALL_NONFATAL(sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1), 
+                                     "battleship:sem_post_retry") == -1) {
             break;
         }
         // printf("[BS %d] posted\n", unit_id);

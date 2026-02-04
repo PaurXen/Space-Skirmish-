@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "log.h"
+#include "error_handler.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -53,7 +54,11 @@ static void ensure_dir_exists(const char *dir) {
         fprintf(stderr, "[LOG] '%s' exists but is not a directory!\n", dir);
         return;
     }
-    (void)mkdir(dir, 0755);
+    if (mkdir(dir, 0755) == -1 && errno != EEXIST) {
+        perror("[LOG] mkdir");
+        fprintf(stderr, "[LOG] Failed to create directory '%s': %s (errno=%d)\n", 
+                dir, strerror(errno), errno);
+    }
 }
 
 /* Open the combined ALL.log in the run directory (O_APPEND). */
@@ -67,7 +72,9 @@ static void open_global_log(void) {
 
     g_all_fd = open(all_path, O_WRONLY | O_CREAT | O_APPEND, 0644);
     if (g_all_fd == -1) {
-        fprintf(stderr, "[LOG] open(%s) failed: %s\n", all_path, strerror(errno));
+        perror("[LOG] open ALL.log");
+        fprintf(stderr, "[LOG] Failed to open '%s': %s (errno=%d)\n", 
+                all_path, strerror(errno), errno);
     }
 }
 
@@ -84,8 +91,24 @@ int log_init(const char *role, int16_t unit_id) {
         strncpy(g_run_dir, rd, sizeof(g_run_dir) - 1);
         g_run_dir[sizeof(g_run_dir) - 1] = '\0';
     } else {
-        strncpy(g_run_dir, "logs", sizeof(g_run_dir) - 1);
-        g_run_dir[sizeof(g_run_dir) - 1] = '\0';
+        /* Try to read from CC's run_dir file (for CM/UI started independently) */
+        FILE *f = fopen("/tmp/skirmish_run_dir.txt", "r");
+        if (f) {
+            if (fgets(g_run_dir, sizeof(g_run_dir), f)) {
+                /* Remove trailing newline */
+                size_t len = strlen(g_run_dir);
+                if (len > 0 && g_run_dir[len-1] == '\n') {
+                    g_run_dir[len-1] = '\0';
+                }
+            } else {
+                strncpy(g_run_dir, "logs", sizeof(g_run_dir) - 1);
+                g_run_dir[sizeof(g_run_dir) - 1] = '\0';
+            }
+            fclose(f);
+        } else {
+            strncpy(g_run_dir, "logs", sizeof(g_run_dir) - 1);
+            g_run_dir[sizeof(g_run_dir) - 1] = '\0';
+        }
     }
 
     ensure_dir_exists("logs");     /* base */
@@ -107,7 +130,9 @@ int log_init(const char *role, int16_t unit_id) {
 
     g_logf = fopen(path, "a");  /* append */
     if (!g_logf) {
-        fprintf(stderr, "[LOG] fopen(%s) failed: %s\n", path, strerror(errno));
+        perror("[LOG] fopen per-process log");
+        fprintf(stderr, "[LOG] Failed to open log file '%s': %s (errno=%d)\n", 
+                path, strerror(errno), errno);
         return -1;
     }
 
@@ -127,11 +152,19 @@ int log_init(const char *role, int16_t unit_id) {
 void log_close(void) {
     if (g_logf) {
         log_msg(LOG_LVL_INFO, "logger closing");
-        fclose(g_logf);
+        if (fclose(g_logf) != 0) {
+            perror("[LOG] fclose per-process log");
+            fprintf(stderr, "[LOG] Error closing per-process log: %s (errno=%d)\n", 
+                    strerror(errno), errno);
+        }
         g_logf = NULL;
     }
     if (g_all_fd != -1) {
-        close(g_all_fd);
+        if (close(g_all_fd) == -1) {
+            perror("[LOG] close ALL.log");
+            fprintf(stderr, "[LOG] Error closing ALL.log: %s (errno=%d)\n", 
+                    strerror(errno), errno);
+        }
         g_all_fd = -1;
     }
 }
@@ -179,12 +212,22 @@ void log_msg(log_level_t lvl, const char *fmt, ...) {
 
     /* Write to per-process log file if available. */
     if (g_logf) {
-        (void)fwrite(line, 1, (size_t)len, g_logf);
-        (void)fflush(g_logf);
+        if (fwrite(line, 1, (size_t)len, g_logf) != (size_t)len) {
+            perror("[LOG] fwrite to per-process log");
+        }
+        if (fflush(g_logf) != 0) {
+            perror("[LOG] fflush");
+        }
     }
 
     /* Append atomically to combined ALL.log if available. */
     if (g_all_fd != -1) {
-        (void)write(g_all_fd, line, (size_t)len);
+        ssize_t written = write(g_all_fd, line, (size_t)len);
+        if (written == -1) {
+            perror("[LOG] write to ALL.log");
+        } else if (written != len) {
+            fprintf(stderr, "[LOG] Partial write to ALL.log: %zd/%d bytes\n", 
+                    written, len);
+        }
     }
 }

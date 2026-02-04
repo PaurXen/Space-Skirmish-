@@ -6,6 +6,7 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <errno.h>
+#include "error_handler.h"
 
 /* Space Skirmish Launcher
  *
@@ -53,8 +54,12 @@ int main(int argc, char **argv) {
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = on_term;
-    sigaction(SIGINT, &sa, NULL);
-    sigaction(SIGTERM, &sa, NULL);
+    if (CHECK_SYS_CALL_NONFATAL(sigaction(SIGINT, &sa, NULL), "launcher:sigaction_SIGINT") == -1) {
+        return 1;
+    }
+    if (CHECK_SYS_CALL_NONFATAL(sigaction(SIGTERM, &sa, NULL), "launcher:sigaction_SIGTERM") == -1) {
+        return 1;
+    }
     
     printf("[Launcher] Starting Space Skirmish...\n");
     printf("[Launcher] CC path: %s\n", cc_path);
@@ -63,17 +68,14 @@ int main(int argc, char **argv) {
     /* Spawn Command Center */
     cc_pid = fork();
     if (cc_pid == -1) {
-        perror("fork CC");
-        return 1;
+        HANDLE_SYS_ERROR("launcher:fork_CC", "Failed to fork Command Center");
     }
     
     if (cc_pid == 0) {
         /* Child process - exec CC */
         execl(cc_path, cc_path, NULL);
         /* If execl returns, it failed */
-        fprintf(stderr, "[Launcher] Failed to exec CC: %s\n", strerror(errno));
-        perror("execl CC");
-        _exit(1);
+        HANDLE_SYS_ERROR("launcher:execl_CC", "Failed to execute Command Center");
     }
     
     printf("[Launcher] Command Center started (pid=%d)\n", cc_pid);
@@ -84,10 +86,10 @@ int main(int argc, char **argv) {
     /* Spawn Console Manager */
     cm_pid = fork();
     if (cm_pid == -1) {
-        perror("fork CM");
+        HANDLE_SYS_ERROR_NONFATAL("launcher:fork_CM", "Failed to fork Console Manager");
         /* Kill CC since CM failed */
-        kill(cc_pid, SIGTERM);
-        waitpid(cc_pid, NULL, 0);
+        CHECK_SYS_CALL_NONFATAL(kill(cc_pid, SIGTERM), "launcher:kill_CC_after_CM_fail");
+        CHECK_SYS_CALL_NONFATAL(waitpid(cc_pid, NULL, 0), "launcher:waitpid_CC");
         return 1;
     }
     
@@ -95,9 +97,7 @@ int main(int argc, char **argv) {
         /* Child process - exec CM */
         execl(cm_path, cm_path, NULL);
         /* If execl returns, it failed */
-        fprintf(stderr, "[Launcher] Failed to exec CM: %s\n", strerror(errno));
-        perror("execl CM");
-        _exit(1);
+        HANDLE_SYS_ERROR("launcher:execl_CM", "Failed to execute Console Manager");
     }
     
     printf("[Launcher] Console Manager started (pid=%d)\n", cm_pid);
@@ -118,7 +118,9 @@ int main(int argc, char **argv) {
             if (errno == ECHILD) {
                 break;  /* No more children */
             }
-            perror("waitpid");
+            perror("[Launcher] waitpid");
+            fprintf(stderr, "[Launcher] waitpid error: %s (errno=%d)\n", 
+                    strerror(errno), errno);
             break;
         }
         
@@ -158,14 +160,22 @@ int main(int argc, char **argv) {
     /* Cleanup - ensure both children are terminated */
     if (cc_pid > 0) {
         printf("[Launcher] Terminating CC...\n");
-        kill(cc_pid, SIGTERM);
-        waitpid(cc_pid, NULL, 0);
+        if (kill(cc_pid, SIGTERM) == -1) {
+            perror("[Launcher] kill CC in cleanup");
+        }
+        if (waitpid(cc_pid, NULL, 0) == -1) {
+            perror("[Launcher] waitpid CC in cleanup");
+        }
     }
     
     if (cm_pid > 0) {
         printf("[Launcher] Terminating CM...\n");
-        kill(cm_pid, SIGTERM);
-        waitpid(cm_pid, NULL, 0);
+        if (kill(cm_pid, SIGTERM) == -1) {
+            perror("[Launcher] kill CM in cleanup");
+        }
+        if (waitpid(cm_pid, NULL, 0) == -1) {
+            perror("[Launcher] waitpid CM in cleanup");
+        }
     }
     
     printf("[Launcher] Shutdown complete.\n");

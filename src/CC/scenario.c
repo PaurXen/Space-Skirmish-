@@ -1,4 +1,5 @@
 #include "CC/scenario.h"
+#include "error_handler.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,10 +16,10 @@ void scenario_default(scenario_t *out) {
     
     /* Default: 4 carriers at corners (current behavior) */
     out->placement_mode = PLACEMENT_CORNERS;
-    out->republic_carriers = 2;
+    out->republic_carriers = 1;
     out->republic_destroyers = 0;
     out->republic_fighters = 0;
-    out->cis_carriers = 2;
+    out->cis_carriers = 0;
     out->cis_destroyers = 0;
     out->cis_fighters = 0;
 }
@@ -35,9 +36,8 @@ static void trim(char *str) {
 }
 
 int scenario_load(const char *filename, scenario_t *out) {
-    FILE *f = fopen(filename, "r");
+    FILE *f = CHECK_NULL_NONFATAL(fopen(filename, "r"), "scenario_load:fopen");
     if (!f) {
-        perror("scenario_load");
         return -1;
     }
     

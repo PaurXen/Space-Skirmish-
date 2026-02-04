@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "ipc/semaphores.h"
+#include "error_handler.h"
 #include <errno.h>
 
 /*

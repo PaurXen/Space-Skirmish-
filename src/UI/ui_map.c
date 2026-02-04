@@ -166,7 +166,7 @@ void* ui_map_thread(void* arg) {
         }
         
         /* Wait before next request */
-        usleep(200000);  // 200ms = 5 updates/sec
+        //usleep(200000);  // 200ms = 5 updates/sec
     }
     
     LOGI("[UI-MAP] Thread exiting");

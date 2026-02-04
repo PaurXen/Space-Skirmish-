@@ -169,7 +169,6 @@ static uint16_t alloc_unit_id(ipc_ctx_t *ctx) {
     return id;   // 0 means "no free slot"
 }
 
-
 /* Register a unit in shared memory:
  *  - sets PID, faction, type, alive flag and position
  *  - attempts to place unit in grid if cell empty (warns if occupied)
@@ -328,7 +327,7 @@ static void cleanup_dead_units(ipc_ctx_t *ctx) {
             }
             if (r == 0) {
                 // still running
-                usleep(10 * 1000);
+                //usleep(10 * 1000);
                 continue;
             }
             if (r == -1) {
@@ -505,7 +504,7 @@ static void* cm_thread_func(void* arg) {
         }
         
         /* Small sleep to avoid busy-waiting */
-        usleep(10000);  /* 10ms */
+        //usleep(10000);  /* 10ms */
     }
     
     LOGI("[CC-CM-Thread] CM handler thread exiting");
@@ -679,7 +678,7 @@ int main(int argc, char **argv) {
      *  - wait for SEM_TICK_DONE alive times (interruptible)
      */
     while (!g_stop) {
-        /* Use select/poll with timeout instead of usleep to check g_stop more often */
+        /* Use select/poll with timeout instead of //usleep to check g_stop more often */
         pthread_mutex_lock(&g_cm_mutex);
         useconds_t tick_us = g_tick_speed_ms * 1000;
         pthread_mutex_unlock(&g_cm_mutex);

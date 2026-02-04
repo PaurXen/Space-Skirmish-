@@ -136,7 +136,7 @@ void* ui_ust_thread(void* arg) {
         render_ust(ui_ctx);
         
         /* Update every 500ms (2 Hz) */
-        usleep(500000);
+        //usleep(500000);
     }
     
     LOGI("[UI-UST] Thread exiting");

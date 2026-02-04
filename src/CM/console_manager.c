@@ -217,7 +217,7 @@ static int send_and_wait(ipc_ctx_t *ctx, mq_cm_cmd_t *cmd) {
         
         /* Blocking wait for reply */
         while (ret == 0 && !g_stop) {
-            usleep(10000);  // 10ms
+            //usleep(10000);  // 10ms
             ret = mq_try_recv_reply(ctx->q_rep, &spawn_reply);
         }
         

@@ -205,7 +205,7 @@ static int send_and_wait(ipc_ctx_t *ctx, mq_cm_cmd_t *cmd) {
                spawn_req.utype, spawn_req.faction, spawn_req.pos.x, spawn_req.pos.y);
         
         if (mq_send_spawn(ctx->q_req, &spawn_req) < 0) {
-            perror("[CM] Failed to send spawn request");
+            HANDLE_SYS_ERROR_NONFATAL("console_manager:mq_send_spawn", "Failed to send spawn request");
             return -1;
         }
         
@@ -222,7 +222,7 @@ static int send_and_wait(ipc_ctx_t *ctx, mq_cm_cmd_t *cmd) {
         }
         
         if (ret < 0) {
-            perror("[CM] Failed to receive spawn reply");
+            HANDLE_SYS_ERROR_NONFATAL("console_manager:mq_try_recv_reply", "Failed to receive spawn reply");
             return -1;
         }
         
@@ -256,7 +256,7 @@ static int send_and_wait(ipc_ctx_t *ctx, mq_cm_cmd_t *cmd) {
     
     /* Send command */
     if (mq_send_cm_cmd(ctx->q_req, cmd) < 0) {
-        perror("[CM] Failed to send command");
+        HANDLE_SYS_ERROR_NONFATAL("console_manager:mq_send_cm_cmd", "Failed to send command");
         return -1;
     }
     
@@ -265,7 +265,7 @@ static int send_and_wait(ipc_ctx_t *ctx, mq_cm_cmd_t *cmd) {
     /* Wait for response (blocking) */
     int ret = mq_recv_cm_reply_blocking(ctx->q_rep, &reply);
     if (ret < 0) {
-        perror("[CM] Failed to receive reply");
+        HANDLE_SYS_ERROR_NONFATAL("console_manager:mq_recv_cm_reply_blocking", "Failed to receive reply");
         return -1;
     }
     
@@ -308,7 +308,7 @@ int main(int argc, char **argv) {
     /* Attach to existing IPC */
     const char *ftok_path = (argc > 1) ? argv[1] : "./ipc.key";
     
-    if (ipc_attach(&ctx, ftok_path) < 0) {
+    if (CHECK_SYS_CALL_NONFATAL(ipc_attach(&ctx, ftok_path), "console_manager:ipc_attach") < 0) {
         fprintf(stderr, "[CM] Failed to attach to IPC (is CC running?)\n");
         LOGE("[CM] Failed to attach to IPC");
         return 1;
@@ -325,10 +325,10 @@ int main(int argc, char **argv) {
     unlink(ui_to_cm);
     
     if (mkfifo(cm_to_ui, 0600) < 0 && errno != EEXIST) {
-        perror("[CM] mkfifo cm_to_ui");
+        HANDLE_SYS_ERROR_NONFATAL("console_manager:mkfifo_cm_to_ui", "Failed to create CM to UI FIFO");
     }
     if (mkfifo(ui_to_cm, 0600) < 0 && errno != EEXIST) {
-        perror("[CM] mkfifo ui_to_cm");
+        HANDLE_SYS_ERROR_NONFATAL("console_manager:mkfifo_ui_to_cm", "Failed to create UI to CM FIFO");
     }
     
     int ui_input_fd = -1;
@@ -367,7 +367,7 @@ int main(int argc, char **argv) {
         
         if (ret < 0) {
             if (errno == EINTR) continue;
-            perror("[CM] select");
+            HANDLE_SYS_ERROR_NONFATAL("console_manager:select", "select() failed in main loop");
             break;
         }
         
@@ -446,7 +446,7 @@ int main(int argc, char **argv) {
     unlink(cm_to_ui);
     unlink(ui_to_cm);
     
-    ipc_detach(&ctx);
+    CHECK_SYS_CALL_NONFATAL(ipc_detach(&ctx), "console_manager:ipc_detach");
     printf("[CM] Console Manager exiting.\n");
     
     return 0;

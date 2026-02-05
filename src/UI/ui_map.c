@@ -15,6 +15,7 @@
 #include "ipc/ipc_mesq.h"
 #include "ipc/semaphores.h"
 #include "log.h"
+#include "error_handler.h"
 
 /* Color pairs for factions */
 #define COLOR_REPUBLIC  1
@@ -147,12 +148,12 @@ void* ui_map_thread(void* arg) {
             
             if (ret > 0 && rep.ready) {
                 /* Got notification, read grid from shared memory */
-                if (sem_lock(ui_ctx->ctx->sem_id, SEM_GLOBAL_LOCK) == 0) {
+                if (CHECK_SYS_CALL_NONFATAL(sem_lock(ui_ctx->ctx->sem_id, SEM_GLOBAL_LOCK), "ui_map:sem_lock") == 0) {
                     /* Copy grid from shared memory */
                     unit_id_t grid_snapshot[M][N];
                     memcpy(grid_snapshot, ui_ctx->ctx->S->grid, sizeof(grid_snapshot));
                     uint32_t tick = ui_ctx->ctx->S->ticks;
-                    sem_unlock(ui_ctx->ctx->sem_id, SEM_GLOBAL_LOCK);
+                    CHECK_SYS_CALL_NONFATAL(sem_unlock(ui_ctx->ctx->sem_id, SEM_GLOBAL_LOCK), "ui_map:sem_unlock");
                     
                     /* Update display */
                     last_tick = tick;

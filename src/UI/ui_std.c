@@ -12,6 +12,7 @@
 
 #include "UI/ui.h"
 #include "log.h"
+#include "error_handler.h"
 
 #define FIFO_PATH "/tmp/skirmish_std.fifo"
 #define BUFFER_SIZE 4096
@@ -29,6 +30,7 @@ void *ui_std_thread(void *arg) {
             created_fifo = 1;
         } else if (errno != EEXIST) {
             /* Failed to create FIFO - not critical, just won't receive tee output */
+            HANDLE_SYS_ERROR_NONFATAL("ui_std:mkfifo", "Failed to create FIFO");
             pthread_mutex_lock(&ui_ctx->ui_lock);
             if (ui_ctx->std_win) {
                 mvwprintw(ui_ctx->std_win, 1, 1, "Warning: Could not create FIFO");
@@ -50,7 +52,7 @@ void *ui_std_thread(void *arg) {
     
     /* Open FIFO in BLOCKING mode - this will wait for a writer (tee) to connect */
     /* This is the correct way to use FIFOs - reader blocks until writer appears */
-    fifo_fd = open(FIFO_PATH, O_RDONLY);
+    fifo_fd = CHECK_SYS_CALL_NONFATAL(open(FIFO_PATH, O_RDONLY), "ui_std:open");
     
     if (fifo_fd == -1) {
         pthread_mutex_lock(&ui_ctx->ui_lock);

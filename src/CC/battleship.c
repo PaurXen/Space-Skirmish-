@@ -36,7 +36,9 @@ static void cleanup_and_exit(int exit_code) {
     if (g_ctx && g_unit_id > 0) {
         LOGW("[BS %u] cleanup_and_exit called, marking dead", g_unit_id);
         mark_dead(g_ctx, g_unit_id);
-        ipc_detach(g_ctx);
+        if (CHECK_SYS_CALL_NONFATAL(ipc_detach(g_ctx), "battleship:cleanup_ipc_detach") == -1) {
+            LOGE("[BS %u] Failed to detach from IPC during cleanup", g_unit_id);
+        }
     }
     exit(exit_code);
 }
@@ -358,7 +360,7 @@ int main(int argc, char **argv) {
     ctx.S->units[unit_id].alive = 1;
     ctx.S->units[unit_id].position.x = (int16_t)x;
     ctx.S->units[unit_id].position.y = (int16_t)y;
-    sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
+    CHECK_SYS_CALL_NONFATAL(sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK), "battleship:sem_unlock_init");
 
     if (log_init("BS", unit_id) == -1) {
         fprintf(stderr, "[BS %u] log_init failed, continuing without logs\n", unit_id);
@@ -386,7 +388,7 @@ int main(int argc, char **argv) {
         
         if (sem_lock_intr(ctx.sem_id, SEM_GLOBAL_LOCK, &g_stop) == -1) {
             if (g_stop) break;
-            LOGE("[BS %u] sem_lock_intr failed: %s", unit_id, strerror(errno));
+            HANDLE_SYS_ERROR_NONFATAL("battleship:sem_lock_intr", "Failed to acquire global lock");
             continue;
         }
         
@@ -399,7 +401,7 @@ int main(int argc, char **argv) {
         alive = ctx.S->units[unit_id].alive;
         cp = (point_t)ctx.S->units[unit_id].position;
         if (alive == 0) {
-            sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
+            CHECK_SYS_CALL_NONFATAL(sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK), "battleship:sem_unlock_dead");
             (void)sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1);
             break;
         }
@@ -414,7 +416,7 @@ int main(int argc, char **argv) {
         if (st.hp <= 0) {
             LOGD("[BS %d] mark as dead", unit_id);
             mark_dead(&ctx, unit_id);
-            sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
+            CHECK_SYS_CALL_NONFATAL(sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK), "battleship:sem_unlock_death");
                 (void)sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1);
             break;
         }
@@ -422,7 +424,7 @@ int main(int argc, char **argv) {
 
         // ensure at most one action per tick
         if (ctx.S->last_step_tick[unit_id] == t) {
-            sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
+            CHECK_SYS_CALL_NONFATAL(sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK), "battleship:sem_unlock_skip");
             (void)sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1);
             continue;
         }
@@ -443,7 +445,7 @@ int main(int argc, char **argv) {
             }
         }
 
-        sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
+        CHECK_SYS_CALL_NONFATAL(sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK), "battleship:sem_unlock_spawn");
         
         if (!alive) {
             (void)sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1);
@@ -485,7 +487,7 @@ int main(int argc, char **argv) {
         LOGD("[BS %u] request to spawn squadron at (%d,%d)",
             unit_id, out.x, out.y);
         }
-        sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
+        CHECK_SYS_CALL_NONFATAL(sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK), "battleship:sem_unlock_action");
 
         
 
@@ -520,6 +522,6 @@ int main(int argc, char **argv) {
     fflush(stdout);
 
     mark_dead(&ctx, unit_id);
-    ipc_detach(&ctx);
+    CHECK_SYS_CALL_NONFATAL(ipc_detach(&ctx), "battleship:final_ipc_detach");
     return 0;
 }

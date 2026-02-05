@@ -76,7 +76,7 @@ void compute_dmg_payload(ipc_ctx_t *ctx, unit_id_t unit_id, unit_stats_t *st){
             total_damage += dmg_msg.damage;
         } else {
             // This shouldn't happen - message sent to wrong PID?
-            fprintf(stderr, "[WARN] Unit %u received damage message for unit %u (damage=%ld)\n", 
+            fprintf(stderr, "[WARN] Unit %u received damage message for unit %u (damage=%d)\n", 
                     unit_id, dmg_msg.target_id, dmg_msg.damage);
         }
     }
@@ -156,7 +156,7 @@ st_points_t unit_weapon_shoot(ipc_ctx_t *ctx,
 
     for (int i = 0; i < st->ba.count; i++) {
         off += snprintf(buf + off, sizeof(buf) - off,
-                        "%d:%ld, ",st->ba.arr[i].w_target, out_dmg[i]);
+                        "%d:%d, ",st->ba.arr[i].w_target, out_dmg[i]);
     }
     snprintf(buf + off, sizeof(buf) - off, "]");
 

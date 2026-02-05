@@ -37,7 +37,9 @@ static void cleanup_and_exit(int exit_code) {
     if (g_ctx && g_unit_id > 0) {
         LOGW("[SQ %u] cleanup_and_exit called, marking dead", g_unit_id);
         mark_dead(g_ctx, g_unit_id);
-        ipc_detach(g_ctx);
+        if (CHECK_SYS_CALL_NONFATAL(ipc_detach(g_ctx), "squadron:cleanup_ipc_detach") == -1) {
+            LOGE("[SQ %u] Failed to detach from IPC during cleanup", g_unit_id);
+        }
     }
     exit(exit_code);
 }
@@ -381,8 +383,8 @@ int main(int argc, char **argv) {
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = on_term;
-    sigaction(SIGTERM, &sa, NULL);
-    sigaction(SIGINT, &(struct sigaction){ .sa_handler = SIG_IGN }, NULL);
+    CHECK_SYS_CALL_NONFATAL(sigaction(SIGTERM, &sa, NULL), "squadron:sigaction_SIGTERM");
+    CHECK_SYS_CALL_NONFATAL(sigaction(SIGINT, &(struct sigaction){ .sa_handler = SIG_IGN }, NULL), "squadron:sigaction_SIGINT");
 
     // damage payload
     struct sigaction sa2;
@@ -390,7 +392,7 @@ int main(int argc, char **argv) {
     sa2.sa_handler = on_damage;
     sigemptyset(&sa2.sa_mask);
     sa2.sa_flags = 0;
-    sigaction(SIGRTMAX, &sa2, NULL);
+    CHECK_SYS_CALL_NONFATAL(sigaction(SIGRTMAX, &sa2, NULL), "squadron:sigaction_SIGRTMAX");
 
     //RNG per process
     srand((unsigned)(time(NULL) ^ (getpid() << 16)));
@@ -417,7 +419,7 @@ int main(int argc, char **argv) {
     ctx.S->units[unit_id].position.x = (int16_t)x;
     ctx.S->units[unit_id].position.y = (int16_t)y;
     // if (in_bounds(x, y, M, N) && ctx.S->grid[x][y] == 0) ctx.S->grid[x][y] = unit_id;
-    sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
+    CHECK_SYS_CALL_NONFATAL(sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK), "squadron:sem_unlock_init");
 
     type = (unit_id_t)type_i;
     st = unit_stats_for_type(type);
@@ -436,7 +438,7 @@ int main(int argc, char **argv) {
 
         if (sem_lock_intr(ctx.sem_id, SEM_GLOBAL_LOCK, &g_stop) == -1) {
             if (g_stop) break;
-            LOGE("[SQ %u] sem_lock_intr failed: %s", unit_id, strerror(errno));
+            HANDLE_SYS_ERROR_NONFATAL("squadron:sem_lock_intr", "Failed to acquire global lock");
             continue;
         }
 
@@ -449,7 +451,7 @@ int main(int argc, char **argv) {
         alive = ctx.S->units[unit_id].alive;
         cp = (point_t)ctx.S->units[unit_id].position;
         if (!alive) {
-            sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
+            CHECK_SYS_CALL_NONFATAL(sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK), "squadron:sem_unlock_dead");
             (void)sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1);
             break;
         }
@@ -464,20 +466,20 @@ int main(int argc, char **argv) {
         if (st.hp <= 0) {
             LOGD("[BS %d] mark as dead", unit_id);
             mark_dead(&ctx, unit_id);
-            sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
+            CHECK_SYS_CALL_NONFATAL(sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK), "squadron:sem_unlock_death");
                 (void)sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1);
             break;
         }
 
 
         if (ctx.S->last_step_tick[unit_id] == t) {
-            sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
+            CHECK_SYS_CALL_NONFATAL(sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK), "squadron:sem_unlock_skip");
             (void)sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1);
             continue;
         }
         ctx.S->last_step_tick[unit_id] = t;
 
-        sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
+        CHECK_SYS_CALL_NONFATAL(sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK), "squadron:sem_unlock_pre_action");
 
         if (!alive) {
             (void)sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1);
@@ -489,7 +491,7 @@ int main(int argc, char **argv) {
              unit_id, t, cp.x, cp.y, order);
         if (sem_lock_intr(ctx.sem_id, SEM_GLOBAL_LOCK, &g_stop) == -1) {
             if (g_stop) break;
-            LOGE("[SQ %u] sem_lock_intr(action) failed: %s", unit_id, strerror(errno));
+            HANDLE_SYS_ERROR_NONFATAL("squadron:sem_lock_intr_action", "Failed to acquire lock for action");
             if (sem_post_retry(ctx.sem_id, SEM_TICK_DONE, +1) == -1) {
                 LOGE("sem_post_retry(TICK_DONE)");
             }
@@ -503,7 +505,7 @@ int main(int argc, char **argv) {
                         &tertiary_target, &have_target_ter);
 
         point_t pos = ctx.S->units[unit_id].position;
-        sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK);
+        CHECK_SYS_CALL_NONFATAL(sem_unlock(ctx.sem_id, SEM_GLOBAL_LOCK), "squadron:sem_unlock_post_action");
 
         if ((t % 1) == 0) {
             LOGI("[BS %u] tick=%u pos=(%d,%d) target=(%d,%d) dt2=%d  hp=%d, sp=%d, fa=%d",
@@ -522,6 +524,6 @@ int main(int argc, char **argv) {
     fflush(stdout);
 
     mark_dead(&ctx, unit_id);
-    ipc_detach(&ctx);
+    CHECK_SYS_CALL_NONFATAL(ipc_detach(&ctx), "squadron:final_ipc_detach");
     return 0;
 }

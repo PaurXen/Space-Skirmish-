@@ -67,9 +67,8 @@ static void exit_handler(void) {
  * Returns 0 if no other instance, -1 if another CC is running. */
 static int check_single_instance(void) {
     const char *pidfile = "/tmp/skirmish_cc.pid";
-    int fd = open(pidfile, O_RDWR | O_CREAT, 0644);
+    int fd = CHECK_SYS_CALL_NONFATAL(open(pidfile, O_RDWR | O_CREAT, 0644), "check_single_instance:open");
     if (fd == -1) {
-        perror("[CC] open pidfile");
         return -1;
     }
 
@@ -93,12 +92,12 @@ static int check_single_instance(void) {
 
     /* Write our PID to the file */
     if (ftruncate(fd, 0) == -1) {
-        perror("[CC] ftruncate pidfile");
+        HANDLE_SYS_ERROR_NONFATAL("check_single_instance:ftruncate", "Failed to truncate pidfile");
     }
     char pid_str[32];
     snprintf(pid_str, sizeof(pid_str), "%d\n", (int)getpid());
     if (write(fd, pid_str, strlen(pid_str)) == -1) {
-        perror("[CC] write pidfile");
+        HANDLE_SYS_ERROR_NONFATAL("check_single_instance:write", "Failed to write PID to pidfile");
     }
 
     /* Keep fd open to maintain lock - it will be released when process exits */
@@ -115,9 +114,7 @@ static void make_run_dir(char *out, size_t out_sz) {
 
     /* ensure base logs/ exists */
     if (mkdir("logs", 0755) == -1 && errno != EEXIST) {
-        perror("[CC] mkdir logs");
-        fprintf(stderr, "[CC] Failed to create logs directory: %s (errno=%d)\n",
-                strerror(errno), errno);
+        HANDLE_SYS_ERROR_NONFATAL("make_run_dir:mkdir", "Failed to create logs directory");
     }
 
     snprintf(out, out_sz,
@@ -127,9 +124,7 @@ static void make_run_dir(char *out, size_t out_sz) {
              (int)pid);
 
     if (mkdir(out, 0755) == -1 && errno != EEXIST) {
-        perror("[CC] mkdir run directory");
-        fprintf(stderr, "[CC] Failed to create run directory '%s': %s (errno=%d)\n",
-                out, strerror(errno), errno);
+        HANDLE_SYS_ERROR_NONFATAL("make_run_dir:mkdir", "Failed to create run directory");
     }
 
     /* Write run directory path to a known location so CM/UI can use it */
@@ -139,9 +134,7 @@ static void make_run_dir(char *out, size_t out_sz) {
         fprintf(f, "%s\n", out);
         fclose(f);
     } else {
-        perror("[CC] fopen run_dir file");
-        fprintf(stderr, "[CC] Failed to write run_dir to '%s': %s (errno=%d)\n",
-                rundir_file, strerror(errno), errno);
+        HANDLE_SYS_ERROR_NONFATAL("make_run_dir:fopen", "Failed to write run_dir file");
     }
 }
 
@@ -203,11 +196,9 @@ static pid_t spawn_unit(ipc_ctx_t *ctx, const char *exe_path,
                               unit_type_t type, point_t pos,
                               const char *ftok_path, unit_id_t commander_id)
 {
-    pid_t pid = fork();
+    pid_t pid = CHECK_SYS_CALL_NONFATAL(fork(), "spawn_unit:fork");
     if (pid == -1) {
-        perror("[CC] fork unit");
-        LOGE("[CC] Failed to fork unit_id=%u: %s (errno=%d)", 
-             unit_id, strerror(errno), errno);
+        LOGE("[CC] Failed to fork unit_id=%u", unit_id);
         return -1;
     }
 
@@ -230,9 +221,7 @@ static pid_t spawn_unit(ipc_ctx_t *ctx, const char *exe_path,
               "--commander", commander_s,
             NULL);
         /* execl only returns on error */
-        perror("[CC child] execl unit");
-        fprintf(stderr, "[CC child] Failed to exec '%s': %s (errno=%d)\n", 
-                exe_path, strerror(errno), errno);
+        HANDLE_SYS_ERROR("spawn_unit:execl", "Failed to exec unit binary");
         _exit(1);
     }
     register_unit(ctx, unit_id, pid, faction, type, pos);
@@ -475,8 +464,7 @@ static void handle_cm_command(ipc_ctx_t *ctx) {
     
     /* Send response */
     if (mq_send_cm_reply(ctx->q_rep, &response) < 0) {
-        perror("[CC] Failed to send CM response");
-        LOGE("[CC] Failed to send CM response: %s", strerror(errno));
+        HANDLE_SYS_ERROR_NONFATAL("handle_cm_command:mq_send_cm_reply", "Failed to send CM response");
     } else {
         LOGD("[CC] Sent CM response: status=%d msg=%s", response.status, response.message);
     }
@@ -548,8 +536,7 @@ int main(int argc, char **argv) {
 
     ipc_ctx_t ctx;
     if (ipc_create(&ctx, ftok_path) == -1) {
-        fprintf(stderr, "[CC] ipc_create failed: %s\n", strerror(errno));
-        perror("ipc_create");
+        HANDLE_SYS_ERROR("main:ipc_create", "Failed to create IPC objects");
         return 1;
     }
 
@@ -599,8 +586,7 @@ int main(int argc, char **argv) {
     }
     
     if (sem_lock(ctx.sem_id, SEM_GLOBAL_LOCK) == -1) {
-        fprintf(stderr, "[CC] failed to acquire initial lock: %s\n", strerror(errno));
-        perror("sem_lock");
+        HANDLE_SYS_ERROR_NONFATAL("main:sem_lock", "Failed to acquire initial lock");
         ipc_detach(&ctx);
         ipc_destroy(&ctx);
         return 1;
@@ -664,7 +650,8 @@ int main(int argc, char **argv) {
     pthread_t cm_thread;
     int thread_ret = pthread_create(&cm_thread, NULL, cm_thread_func, &ctx);
     if (thread_ret != 0) {
-        LOGE("[CC] Failed to create CM thread: %s", strerror(thread_ret));
+        errno = thread_ret;
+        HANDLE_SYS_ERROR_NONFATAL("main:pthread_create", "Failed to create CM thread");
         fprintf(stderr, "[CC] Warning: CM thread creation failed, continuing without CM support\n");
     } else {
         LOGI("[CC] CM handler thread started successfully");

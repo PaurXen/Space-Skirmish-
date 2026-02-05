@@ -7,10 +7,7 @@ IPC_OBJS=$(IPC_SRCS:.c=.o)
 # Error handler object - used by all binaries (depends on utils.o for logging)
 ERROR_HANDLER_OBJ=src/error_handler.o
 
-all: launcher command_center console_manager battleship squadron ui
-
-launcher: src/launcher.o $(ERROR_HANDLER_OBJ) src/utils.o
-	$(CC) $(CFLAGS) -o launcher $^
+all: command_center console_manager battleship squadron ui
 
 command_center: src/CC/command_center.o src/ipc/semaphores.o src/ipc/ipc_context.o src/utils.o src/tee/terminal_tee.o src/ipc/ipc_mesq.o src/CC/unit_logic.o src/CC/unit_ipc.o src/CC/unit_stats.o src/CC/unit_size.o src/CC/weapon_stats.o src/CC/scenario.o $(ERROR_HANDLER_OBJ)
 	$(CC) $(CFLAGS) -o command_center $^ -lpthread
@@ -46,4 +43,4 @@ src/UI/%.o: src/UI/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
-	rm -f launcher command_center console_manager battleship squadron ui src/*.o src/ipc/*.o src/CC/*.o src/CM/*.o src/tee/*.o src/UI/*.o
+	rm -f command_center console_manager battleship squadron ui src/*.o src/ipc/*.o src/CC/*.o src/CM/*.o src/tee/*.o src/UI/*.o

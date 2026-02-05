@@ -5,8 +5,8 @@
 static const fighter_bay_view_t k_fighter_types(unit_type_t type){
     switch (type) {
         case TYPE_FLAGSHIP:  return (fighter_bay_view_t){.capacity = 5, .current = 0, .sq_types = {TYPE_ELITE, TYPE_ELITE, TYPE_BOMBER, TYPE_ELITE, TYPE_BOMBER, DUMMY}};
-        case TYPE_CARRIER:   return (fighter_bay_view_t){.capacity = 3, .current = 0, .sq_types = {TYPE_BOMBER, TYPE_BOMBER, TYPE_FIGHTER, TYPE_BOMBER, TYPE_FIGHTER, TYPE_FIGHTER}};
-        case TYPE_DESTROYER: return (fighter_bay_view_t){.capacity = 2, .current = 0, .sq_types = {TYPE_FIGHTER, TYPE_FIGHTER, TYPE_BOMBER, TYPE_FIGHTER, DUMMY, DUMMY}};
+        case TYPE_CARRIER:   return (fighter_bay_view_t){.capacity = 5, .current = 0, .sq_types = {TYPE_BOMBER, TYPE_BOMBER, TYPE_FIGHTER, TYPE_BOMBER, TYPE_FIGHTER, TYPE_FIGHTER}};
+        case TYPE_DESTROYER: return (fighter_bay_view_t){.capacity = 3, .current = 0, .sq_types = {TYPE_FIGHTER, TYPE_FIGHTER, TYPE_BOMBER, TYPE_FIGHTER, DUMMY, DUMMY}};
         case TYPE_FIGHTER:    return (fighter_bay_view_t){.capacity = 0, .current = 0, .sq_types = {DUMMY,DUMMY,DUMMY,DUMMY,DUMMY,DUMMY}};
         case TYPE_BOMBER:    return (fighter_bay_view_t){.capacity = 0, .current = 0, .sq_types = {DUMMY,DUMMY,DUMMY,DUMMY,DUMMY,DUMMY}};
         case TYPE_ELITE:     return (fighter_bay_view_t){.capacity = 0, .current = 0, .sq_types = {DUMMY,DUMMY,DUMMY,DUMMY,DUMMY,DUMMY}};

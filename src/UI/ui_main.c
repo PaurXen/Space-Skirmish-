@@ -15,6 +15,7 @@
 #include "UI/ui_ust.h"
 #include "ipc/ipc_context.h"
 #include "log.h"
+#include "error_handler.h"
 
 static ui_context_t g_ui_ctx = {0};
 
@@ -35,7 +36,9 @@ int ui_init(ui_context_t *ui_ctx, const char *run_dir) {
     ui_ctx->cm_in_fd = -1;
     ui_ctx->cm_out_fd = -1;
     
-    pthread_mutex_init(&ui_ctx->ui_lock, NULL);
+    if (CHECK_SYS_CALL_NONFATAL(pthread_mutex_init(&ui_ctx->ui_lock, NULL), "ui_init:pthread_mutex_init") != 0) {
+        return -1;
+    }
     
     /* Initialize ncurses */
     initscr();
@@ -159,7 +162,7 @@ int main(int argc, char **argv) {
     
     /* Attach to IPC */
     ipc_ctx_t ctx;
-    if (ipc_attach(&ctx, ftok_path) == -1) {
+    if (CHECK_SYS_CALL_NONFATAL(ipc_attach(&ctx, ftok_path), "ui_main:ipc_attach") == -1) {
         fprintf(stderr, "[UI] Failed to attach to IPC. Is command_center running?\n");
         LOGE("[UI] Failed to attach to IPC");
         return 1;
@@ -179,7 +182,7 @@ int main(int argc, char **argv) {
     
     /* Start MAP thread */
     if (pthread_create(&g_ui_ctx.map_thread_id, NULL, ui_map_thread, &g_ui_ctx) != 0) {
-        fprintf(stderr, "[UI] Failed to create MAP thread\n");
+        HANDLE_SYS_ERROR_NONFATAL("ui_main:pthread_create_MAP", "Failed to create MAP thread");
         ui_cleanup(&g_ui_ctx);
         ipc_detach(&ctx);
         return 1;
@@ -187,7 +190,7 @@ int main(int argc, char **argv) {
     
     /* Start UST thread */
     if (pthread_create(&g_ui_ctx.ust_thread_id, NULL, ui_ust_thread, &g_ui_ctx) != 0) {
-        fprintf(stderr, "[UI] Failed to create UST thread\n");
+        HANDLE_SYS_ERROR_NONFATAL("ui_main:pthread_create_UST", "Failed to create UST thread");
         g_ui_ctx.stop = 1;
         pthread_join(g_ui_ctx.map_thread_id, NULL);
         ui_cleanup(&g_ui_ctx);
@@ -197,7 +200,7 @@ int main(int argc, char **argv) {
     
     /* Start STD thread */
     if (pthread_create(&g_ui_ctx.std_thread_id, NULL, ui_std_thread, &g_ui_ctx) != 0) {
-        fprintf(stderr, "[UI] Failed to create STD thread\n");
+        HANDLE_SYS_ERROR_NONFATAL("ui_main:pthread_create_STD", "Failed to create STD thread");
         g_ui_ctx.stop = 1;
         pthread_join(g_ui_ctx.map_thread_id, NULL);
         pthread_join(g_ui_ctx.ust_thread_id, NULL);
@@ -219,7 +222,7 @@ int main(int argc, char **argv) {
         /* Refresh all windows */
         ui_refresh_all(&g_ui_ctx);
 
-        usleep(50000);  // 50ms refresh rate
+        //usleep(50000);  // 50ms refresh rate
     }
     
     LOGI("[UI] Main loop exited, waiting for threads...");
@@ -244,7 +247,7 @@ int main(int argc, char **argv) {
     /* Cleanup */
     LOGI("[UI] Shutting down...");
     ui_cleanup(&g_ui_ctx);
-    ipc_detach(&ctx);
+    CHECK_SYS_CALL_NONFATAL(ipc_detach(&ctx), "ui_main:ipc_detach");
     LOGI("[UI] Shutdown complete");
     log_close();
     

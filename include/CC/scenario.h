@@ -44,12 +44,18 @@ typedef struct {
     
     /* Auto-generation settings (if unit_count == 0) */
     placement_mode_t placement_mode;
+    int republic_flagships;
     int republic_carriers;
     int republic_destroyers;
     int republic_fighters;
+    int republic_bombers;
+    int republic_elites;
+    int cis_flagships;
     int cis_carriers;
     int cis_destroyers;
     int cis_fighters;
+    int cis_bombers;
+    int cis_elites;
 } scenario_t;
 
 /* Load scenario from file, returns 0 on success, -1 on error */

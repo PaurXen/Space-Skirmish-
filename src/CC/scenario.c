@@ -14,14 +14,20 @@ void scenario_default(scenario_t *out) {
     out->map_width = M;
     out->map_height = N;
     
-    /* Default: 4 carriers at corners (current behavior) */
+    /* Default: 1 carrier at corner */
     out->placement_mode = PLACEMENT_CORNERS;
+    out->republic_flagships = 0;
     out->republic_carriers = 1;
     out->republic_destroyers = 0;
     out->republic_fighters = 0;
+    out->republic_bombers = 0;
+    out->republic_elites = 0;
+    out->cis_flagships = 0;
     out->cis_carriers = 0;
     out->cis_destroyers = 0;
     out->cis_fighters = 0;
+    out->cis_bombers = 0;
+    out->cis_elites = 0;
 }
 
 static void trim(char *str) {
@@ -95,9 +101,12 @@ int scenario_load(const char *filename, scenario_t *out) {
                 }
             }
         } else if (strcmp(section, "republic") == 0) {
-            if (strcmp(key, "carriers") == 0) out->republic_carriers = atoi(value);
+            if (strcmp(key, "flagships") == 0) out->republic_flagships = atoi(value);
+            else if (strcmp(key, "carriers") == 0) out->republic_carriers = atoi(value);
             else if (strcmp(key, "destroyers") == 0) out->republic_destroyers = atoi(value);
             else if (strcmp(key, "fighters") == 0) out->republic_fighters = atoi(value);
+            else if (strcmp(key, "bombers") == 0) out->republic_bombers = atoi(value);
+            else if (strcmp(key, "elites") == 0) out->republic_elites = atoi(value);
             else if (strcmp(key, "placement") == 0) {
                 if (strcmp(value, "corners") == 0) out->placement_mode = PLACEMENT_CORNERS;
                 else if (strcmp(value, "edges") == 0) out->placement_mode = PLACEMENT_EDGES;
@@ -106,9 +115,12 @@ int scenario_load(const char *filename, scenario_t *out) {
                 else if (strcmp(value, "scattered") == 0) out->placement_mode = PLACEMENT_SCATTERED;
             }
         } else if (strcmp(section, "cis") == 0) {
-            if (strcmp(key, "carriers") == 0) out->cis_carriers = atoi(value);
+            if (strcmp(key, "flagships") == 0) out->cis_flagships = atoi(value);
+            else if (strcmp(key, "carriers") == 0) out->cis_carriers = atoi(value);
             else if (strcmp(key, "destroyers") == 0) out->cis_destroyers = atoi(value);
             else if (strcmp(key, "fighters") == 0) out->cis_fighters = atoi(value);
+            else if (strcmp(key, "bombers") == 0) out->cis_bombers = atoi(value);
+            else if (strcmp(key, "elites") == 0) out->cis_elites = atoi(value);
         } else if (strcmp(section, "units") == 0) {
             if (strcmp(key, "add") == 0 && out->unit_count < MAX_INITIAL_UNITS) {
                 char type_str[32], faction_str[32];
@@ -162,14 +174,23 @@ void scenario_generate_placements(scenario_t *scenario) {
     switch (scenario->placement_mode) {
         case PLACEMENT_CORNERS: {
             int idx = 0;
+            for (int i = 0; i < scenario->republic_flagships; i++, idx++)
+                ADD_UNIT(TYPE_FLAGSHIP, FACTION_REPUBLIC, 5 + idx * 4, 5 + idx * 4);
             for (int i = 0; i < scenario->republic_carriers; i++, idx++)
                 ADD_UNIT(TYPE_CARRIER, FACTION_REPUBLIC, 5 + idx * 3, 5 + idx * 3);
             for (int i = 0; i < scenario->republic_destroyers; i++, idx++)
                 ADD_UNIT(TYPE_DESTROYER, FACTION_REPUBLIC, 8 + idx * 3, 8 + idx * 3);
             for (int i = 0; i < scenario->republic_fighters; i++, idx++)
                 ADD_UNIT(TYPE_FIGHTER, FACTION_REPUBLIC, 10 + idx * 2, 10 + idx * 2);
+            for (int i = 0; i < scenario->republic_bombers; i++, idx++)
+                ADD_UNIT(TYPE_BOMBER, FACTION_REPUBLIC, 12 + idx * 2, 12 + idx * 2);
+            for (int i = 0; i < scenario->republic_elites; i++, idx++)
+                ADD_UNIT(TYPE_ELITE, FACTION_REPUBLIC, 14 + idx * 2, 14 + idx * 2);
             
             idx = 0;
+            for (int i = 0; i < scenario->cis_flagships; i++, idx++)
+                ADD_UNIT(TYPE_FLAGSHIP, FACTION_CIS, scenario->map_width - 6 - idx * 4, 
+                         scenario->map_height - 6 - idx * 4);
             for (int i = 0; i < scenario->cis_carriers; i++, idx++)
                 ADD_UNIT(TYPE_CARRIER, FACTION_CIS, scenario->map_width - 8 - idx * 3, 
                          scenario->map_height - 8 - idx * 3);
@@ -179,10 +200,19 @@ void scenario_generate_placements(scenario_t *scenario) {
             for (int i = 0; i < scenario->cis_fighters; i++, idx++)
                 ADD_UNIT(TYPE_FIGHTER, FACTION_CIS, scenario->map_width - 13 - idx * 2,
                          scenario->map_height - 13 - idx * 2);
+            for (int i = 0; i < scenario->cis_bombers; i++, idx++)
+                ADD_UNIT(TYPE_BOMBER, FACTION_CIS, scenario->map_width - 15 - idx * 2,
+                         scenario->map_height - 15 - idx * 2);
+            for (int i = 0; i < scenario->cis_elites; i++, idx++)
+                ADD_UNIT(TYPE_ELITE, FACTION_CIS, scenario->map_width - 17 - idx * 2,
+                         scenario->map_height - 17 - idx * 2);
             break;
         }
         
         case PLACEMENT_RANDOM: {
+            for (int i = 0; i < scenario->republic_flagships; i++)
+                ADD_UNIT(TYPE_FLAGSHIP, FACTION_REPUBLIC, rand() % (scenario->map_width / 2),
+                         rand() % scenario->map_height);
             for (int i = 0; i < scenario->republic_carriers; i++)
                 ADD_UNIT(TYPE_CARRIER, FACTION_REPUBLIC, rand() % (scenario->map_width / 2),
                          rand() % scenario->map_height);
@@ -192,7 +222,16 @@ void scenario_generate_placements(scenario_t *scenario) {
             for (int i = 0; i < scenario->republic_fighters; i++)
                 ADD_UNIT(TYPE_FIGHTER, FACTION_REPUBLIC, rand() % (scenario->map_width / 2),
                          rand() % scenario->map_height);
+            for (int i = 0; i < scenario->republic_bombers; i++)
+                ADD_UNIT(TYPE_BOMBER, FACTION_REPUBLIC, rand() % (scenario->map_width / 2),
+                         rand() % scenario->map_height);
+            for (int i = 0; i < scenario->republic_elites; i++)
+                ADD_UNIT(TYPE_ELITE, FACTION_REPUBLIC, rand() % (scenario->map_width / 2),
+                         rand() % scenario->map_height);
             
+            for (int i = 0; i < scenario->cis_flagships; i++)
+                ADD_UNIT(TYPE_FLAGSHIP, FACTION_CIS, scenario->map_width / 2 + rand() % (scenario->map_width / 2),
+                         rand() % scenario->map_height);
             for (int i = 0; i < scenario->cis_carriers; i++)
                 ADD_UNIT(TYPE_CARRIER, FACTION_CIS, scenario->map_width / 2 + rand() % (scenario->map_width / 2),
                          rand() % scenario->map_height);
@@ -202,6 +241,12 @@ void scenario_generate_placements(scenario_t *scenario) {
             for (int i = 0; i < scenario->cis_fighters; i++)
                 ADD_UNIT(TYPE_FIGHTER, FACTION_CIS, scenario->map_width / 2 + rand() % (scenario->map_width / 2),
                          rand() % scenario->map_height);
+            for (int i = 0; i < scenario->cis_bombers; i++)
+                ADD_UNIT(TYPE_BOMBER, FACTION_CIS, scenario->map_width / 2 + rand() % (scenario->map_width / 2),
+                         rand() % scenario->map_height);
+            for (int i = 0; i < scenario->cis_elites; i++)
+                ADD_UNIT(TYPE_ELITE, FACTION_CIS, scenario->map_width / 2 + rand() % (scenario->map_width / 2),
+                         rand() % scenario->map_height);
             break;
         }
         
@@ -210,20 +255,32 @@ void scenario_generate_placements(scenario_t *scenario) {
             int y_cis = scenario->map_height * 2 / 3;
             int x = 10;
             
+            for (int i = 0; i < scenario->republic_flagships; i++, x += 10)
+                ADD_UNIT(TYPE_FLAGSHIP, FACTION_REPUBLIC, x, y_rep);
             for (int i = 0; i < scenario->republic_carriers; i++, x += 8)
                 ADD_UNIT(TYPE_CARRIER, FACTION_REPUBLIC, x, y_rep);
             for (int i = 0; i < scenario->republic_destroyers; i++, x += 6)
                 ADD_UNIT(TYPE_DESTROYER, FACTION_REPUBLIC, x, y_rep);
             for (int i = 0; i < scenario->republic_fighters; i++, x += 4)
                 ADD_UNIT(TYPE_FIGHTER, FACTION_REPUBLIC, x, y_rep);
+            for (int i = 0; i < scenario->republic_bombers; i++, x += 4)
+                ADD_UNIT(TYPE_BOMBER, FACTION_REPUBLIC, x, y_rep);
+            for (int i = 0; i < scenario->republic_elites; i++, x += 4)
+                ADD_UNIT(TYPE_ELITE, FACTION_REPUBLIC, x, y_rep);
             
             x = 10;
+            for (int i = 0; i < scenario->cis_flagships; i++, x += 10)
+                ADD_UNIT(TYPE_FLAGSHIP, FACTION_CIS, x, y_cis);
             for (int i = 0; i < scenario->cis_carriers; i++, x += 8)
                 ADD_UNIT(TYPE_CARRIER, FACTION_CIS, x, y_cis);
             for (int i = 0; i < scenario->cis_destroyers; i++, x += 6)
                 ADD_UNIT(TYPE_DESTROYER, FACTION_CIS, x, y_cis);
             for (int i = 0; i < scenario->cis_fighters; i++, x += 4)
                 ADD_UNIT(TYPE_FIGHTER, FACTION_CIS, x, y_cis);
+            for (int i = 0; i < scenario->cis_bombers; i++, x += 4)
+                ADD_UNIT(TYPE_BOMBER, FACTION_CIS, x, y_cis);
+            for (int i = 0; i < scenario->cis_elites; i++, x += 4)
+                ADD_UNIT(TYPE_ELITE, FACTION_CIS, x, y_cis);
             break;
         }
         

@@ -60,6 +60,8 @@ Fast-paced fighter-only engagement.
 - `width` - Map width (40-200, default 80)
 - `height` - Map height (20-100, default 40)
 
+> **Note:** Map size does not rescale unit placement positions. If the map is too small for the requested units with the chosen placement mode, units that would spawn out-of-bounds are silently skipped. For example, with `placement=corners` and 6 bombers on a 40x20 map, only 4 bombers will spawn because the remaining positions exceed the map height.
+
 #### [obstacles]
 - `add=x,y` - Add obstacle at coordinates (can have multiple)
 

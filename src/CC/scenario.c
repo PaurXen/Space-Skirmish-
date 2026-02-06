@@ -18,16 +18,16 @@ void scenario_default(scenario_t *out) {
     out->placement_mode = PLACEMENT_CORNERS;
     out->republic_flagships = 0;
     out->republic_carriers = 1;
-    out->republic_destroyers = 0;
+    out->republic_destroyers = 1;
     out->republic_fighters = 0;
     out->republic_bombers = 0;
-    out->republic_elites = 0;
+    out->republic_elites = 2;
     out->cis_flagships = 0;
-    out->cis_carriers = 0;
-    out->cis_destroyers = 0;
+    out->cis_carriers = 1;
+    out->cis_destroyers = 1;
     out->cis_fighters = 0;
     out->cis_bombers = 0;
-    out->cis_elites = 0;
+    out->cis_elites = 2;
 }
 
 static void trim(char *str) {

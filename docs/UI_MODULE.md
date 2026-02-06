@@ -570,7 +570,7 @@ void *ui_std_thread(void *arg) {
     
     /* Try to create FIFO if it doesn't exist */
     if (access(FIFO_PATH, F_OK) != 0) {
-        if (mkfifo(FIFO_PATH, 0666) == 0) {
+        if (mkfifo(FIFO_PATH, 0600) == 0) {
             created_fifo = 1;
         } else if (errno != EEXIST) {
             /* Failed to create FIFO - not critical */

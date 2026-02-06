@@ -743,7 +743,7 @@ All processes write to a single combined log using atomic append:
 
 ```c
 // Opened with O_APPEND flag
-g_all_fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+g_all_fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0600);
 
 // Atomic write (kernel guarantees atomicity for O_APPEND)
 write(g_all_fd, line, len);
@@ -1655,7 +1655,7 @@ strace -e write -p <PID>
 **Solution:**
 ```c
 // Ensure ALL.log is opened with O_APPEND
-g_all_fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+g_all_fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0600);
 
 // Check for errors
 if (g_all_fd == -1) {

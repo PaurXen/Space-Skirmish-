@@ -150,26 +150,44 @@ void* ui_map_thread(void* arg) {
             
             if (ret > 0 && rep.ready) {
                 /* Got notification, read grid from shared memory */
-                if (CHECK_SYS_CALL_NONFATAL(sem_lock(ui_ctx->ctx->sem_id, SEM_GLOBAL_LOCK), "ui_map:sem_lock") == 0) {
+                int lock_ret = sem_lock(ui_ctx->ctx->sem_id, SEM_GLOBAL_LOCK);
+                if (lock_ret == 0) {
                     /* Copy grid from shared memory */
                     unit_id_t grid_snapshot[M][N];
                     memcpy(grid_snapshot, ui_ctx->ctx->S->grid, sizeof(grid_snapshot));
                     uint32_t tick = ui_ctx->ctx->S->ticks;
-                    CHECK_SYS_CALL_NONFATAL(sem_unlock(ui_ctx->ctx->sem_id, SEM_GLOBAL_LOCK), "ui_map:sem_unlock");
+                    sem_unlock(ui_ctx->ctx->sem_id, SEM_GLOBAL_LOCK);
                     
                     /* Update display */
                     last_tick = tick;
                     render_map(ui_ctx, grid_snapshot, last_tick);
+                } else if (errno == EINVAL) {
+                    /* Semaphore destroyed - IPC resources gone, exit gracefully */
+                    LOGI("[UI-MAP] IPC resources destroyed, exiting");
+                    ui_ctx->stop = 1;
+                    break;
                 }
             } else if (!ui_ctx->stop) {
+                /* Check if message queue was destroyed */
+                if (errno == EINVAL || errno == EIDRM) {
+                    LOGI("[UI-MAP] Message queue destroyed, exiting");
+                    ui_ctx->stop = 1;
+                    break;
+                }
                 LOGW("[UI-MAP] Failed to receive response");
             }
         } else if (!ui_ctx->stop) {
+            /* Check if message queue was destroyed */
+            if (errno == EINVAL || errno == EIDRM) {
+                LOGI("[UI-MAP] Message queue destroyed, exiting");
+                ui_ctx->stop = 1;
+                break;
+            }
             LOGW("[UI-MAP] Failed to send request");
         }
         
         /* Wait before next request */
-        usleep(200000);  // 200ms = 5 updates/sec
+        //usleep(200000);  // 200ms = 5 updates/sec
     }
     
     LOGI("[UI-MAP] Thread exiting");

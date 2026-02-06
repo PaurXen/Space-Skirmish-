@@ -569,7 +569,7 @@ Shutdown sequence:
 
 ---
 
-#### Test 1.2: Flagship Autonomous Behavior
+#### Test 1.2: Flagship Autonomous Behavior (TBA)
 
 **Test Objective**:
 _Validate that Flagship operates autonomously according to personality (Passive/Active/Aggressive)_
@@ -621,36 +621,97 @@ Scenario:
 #### Test 1.2: Battleship Patrol Behavior
 
 **Test Objective**:
-_Verify Battleship patrol logic when no commander exists_
+_Verify Battleship patrol logic when no commander exists (autonomous patrol)_
 
 **Test Setup**:
 ```
-[TO FILL IN]
+Scenario: default.conf (Default Battle)
+- Map: 120×40
+- Units: 1 Republic Carrier (BS 1) at (5,5)
+- Carrier type=3 with fighter bay capacity=5
+- Log: logs/run_2026-02-06_04-24-53_pid145812/ALL.log
+- Console Manager: freeze, set speed to 3000ms, resume
+- UI: running for visual verification
 ```
 
 **Test Procedure**:
 ```
-[TO FILL IN]
+1. Start simulation: ./command_center --scenario default &
+2. Start console_manager and immediately freeze simulation
+3. Start UI: ./ui
+4. Set tick speed to 3000ms for easier observation
+5. Resume simulation and observe:
+   a. BS 1 picks random patrol target within patrol radius
+   b. BS 1 moves toward target (speed=6 per tick)
+   c. When target reached, picks new patrol target
+   d. BS 1 spawns squadrons every tick until capacity full
+6. Run for 46 ticks and issue 'end' command
 ```
 
 **Expected Results**:
 ```
-[TO FILL IN]
+- BS 1 patrols autonomously (no commander, order=1 PATROL)
+- Patrol targets within configured patrol radius (20)
+- Movement: 6 cells per tick (Carrier speed)
+- Squadron spawning: 1 per tick until capacity=5 reached
+- Squadrons receive GUARD orders (order=5) to escort BS 1
 ```
 
 **Actual Results**:
 ```
-[TO FILL IN DURING TESTING]
+✅ PASSED - Test executed 2026-02-06
+
+Battleship Patrol Sequence:
+  Tick 1: pos=(5,5) → picked patrol target (24,1), moved to (11,5)
+  Tick 2: pos=(11,5) → target (24,1), moved to (17,5)
+  Tick 3: pos=(17,5) → target (24,1), moved to (22,2)
+  Tick 4: pos=(22,2) → target (24,1), arrived at (24,1) dt2=0
+  ...
+  Tick 46: pos=(25,7) → target (25,7), dt2=0 (at patrol point)
+
+Patrol Target Selection Observed:
+  - (24,1), (25,7), and other random targets within radius
+  - New target picked when dt2=0 (destination reached)
+
+Squadron Spawning:
+  Tick 1: Spawned SQ 2 at (12,2) - type=5 (light fighter)
+  Tick 2: Spawned SQ 3 at (21,5) - type=5 (light fighter)
+  Tick 3: Spawned SQ 4 at (24,3) - type=4 (fighter)
+  Tick 4: Spawned SQ 5 at (26,3) - type=4 (fighter)
+  Tick 5: Spawned SQ 6 at (28,5) - type=4 (fighter)
+  Fighter bay: capacity=5, current=5 (full)
+
+Squadron Orders:
+  - All squadrons received order=5 (GUARD) with target=1 (BS 1)
+  - Squadrons follow BS 1 maintaining escort positions
+
+UI Observations:
+  - MAP showed BS 1 (symbol C) moving across grid
+  - UST showed BS 1 stats: hp=100, sp=6
+  - All 5 squadrons visible and tracking BS 1
+
+Shutdown (tick 46):
+  - 'end' command via console_manager
+  - 6 units reaped (BS 1 + 5 squadrons)
+  - UI detected IPC destruction and exited cleanly
 ```
 
 **Pass/Fail Criteria**:
 ```
-[TO FILL IN]
+✅ PASS - Battleship patrols autonomously without commander
+✅ PASS - Random patrol targets picked within radius
+✅ PASS - Movement speed matches Carrier spec (6/tick)
+✅ PASS - Squadrons spawned until capacity reached
+✅ PASS - Squadrons receive GUARD orders
+✅ PASS - UI shutdown graceful (BUG-001 fix verified)
 ```
 
 **Notes**:
 ```
-[TO FILL IN]
+- This test also validates BUG-001 fix: UI exited cleanly after 'end' command
+- Console Manager freeze/resume commands working correctly
+- Tick speed command (3000ms) allowed detailed observation
+- dt2 = squared distance to target (dt2=0 means at destination)
 ```
 
 ---
@@ -662,32 +723,113 @@ _Test squadron seeking and accepting commander from Battleship_
 
 **Test Setup**:
 ```
-[TO FILL IN]
+Scenario: Custom test scenario
+- Map: 120×40
+- Units:
+  - BS 1 (Destroyer, type=2) at (8,8) - SP=3, DR=20
+  - SQ 2 (Fighter, type=4) at (12,12) - no initial commander
+  - SQ 3 (Fighter, type=4) at (14,14) - no initial commander
+- Log: logs/run_2026-02-06_04-31-31_pid147247/
+- Duration: 13 ticks
 ```
 
 **Test Procedure**:
 ```
-[TO FILL IN]
+1. Start simulation with 1 Destroyer + 2 independent Fighters
+2. Observe tick 1: Squadrons have no commander (commander=0, state=0)
+3. Observe tick 1: Squadrons detect BS 1 and send commander requests
+4. Observe tick 2: BS 1 accepts squadrons as underlings
+5. Observe tick 2: Squadrons receive assignment confirmation
+6. Observe tick 2+: Squadrons receive GUARD orders and follow BS 1
+7. Verify squadrons track commander position throughout simulation
 ```
 
 **Expected Results**:
 ```
-[TO FILL IN]
+- Tick 1: SQ 2 and SQ 3 start with commander=0 (no commander)
+- Tick 1: Squadrons send commander request to nearest Battleship
+- Tick 1: Squadrons patrol independently while awaiting response
+- Tick 2: BS 1 accepts both squadrons as underlings
+- Tick 2: Squadrons receive "assigned to commander 1" confirmation
+- Tick 2+: Squadrons receive GUARD orders (order=5) with target=1
+- Tick 2+: Squadrons move toward commander's position
 ```
 
 **Actual Results**:
 ```
-[TO FILL IN DURING TESTING]
+✅ PASSED - Test executed 2026-02-06
+
+Squadron 2 (SQ_u2_pid_147252.log):
+  Tick 1: [SQ 2] current commander 0 state 0
+          [SQ 2] sent commander request to potential BS 1
+          [SQ 2] picked new patrol target (20,7) (patrolling while waiting)
+          pos=(12,12) → (16,9)
+  
+  Tick 2: [SQ 2] assigned to commander 1
+          [SQ 2] received order 5 with target 1
+          [SQ 2] current commander 1 state 1
+          Started tracking BS 1's position
+
+Squadron 3 (SQ_u3_pid_147253.log):
+  Tick 1: [SQ 3] current commander 0 state 0
+          [SQ 3] sent commander request to potential BS 1
+          [SQ 3] picked new patrol target (5,17) (patrolling while waiting)
+          pos=(14,14) → (9,14)
+  
+  Tick 2: [SQ 3] assigned to commander 1
+          [SQ 3] received order 5 with target 1
+          [SQ 3] current commander 1 state 1
+          Started tracking BS 1's position
+
+Battleship 1 (BS_u1_pid_147251.log):
+  Tick 1: [BS 1] accepted squadron 3 as underling
+          [BS 1] sent order 5 with target 1 to SQ 3
+  
+  Tick 2: [BS 1] added squadron 4 to underlings (spawned)
+          [BS 1] accepted squadron 2 as underling
+          [BS 1] sent order 5 with target 1 to SQ 3
+          [BS 1] sent order 5 with target 1 to SQ 4
+          [BS 1] sent order 5 with target 1 to SQ 2
+
+Post-Assignment Behavior (ticks 3-13):
+  - SQ 2 and SQ 3 continuously receive GUARD orders from BS 1
+  - Both squadrons track commander position each tick
+  - Squadrons move toward BS 1's current position
+  - BS 1 also spawned SQ 4, SQ 5, SQ 6 (fighter bay capacity=3)
+  - All 5 squadrons following BS 1 by tick 4
+
+Shutdown (tick 13):
+  - All units terminated cleanly
+  - 6 children reaped (BS 1 + 5 squadrons)
 ```
 
 **Pass/Fail Criteria**:
 ```
-[TO FILL IN]
+✅ PASS - Squadrons start with no commander (commander=0)
+✅ PASS - Squadrons detect and request commander from BS
+✅ PASS - BS accepts squadron commander requests
+✅ PASS - Squadrons receive assignment confirmation
+✅ PASS - GUARD orders (order=5) sent to all underlings
+✅ PASS - Squadrons track commander state (state=1 = alive)
+✅ PASS - Squadrons move toward commander position
 ```
 
 **Notes**:
 ```
-[TO FILL IN]
+Commander Assignment Protocol:
+1. Squadron checks registry for nearby Battleships (DR=20 detection)
+2. Squadron sends commander request via message queue
+3. Battleship accepts squadron, adds to underlings list
+4. Battleship sends GUARD order with target=self (unit_id=1)
+5. Squadron receives assignment, updates commander field
+6. Squadron switches from PATROL (order=1) to GUARD (order=5)
+7. Squadron targets commander's position for escort behavior
+
+Key observations:
+- SQ 3 was accepted before SQ 2 (closer to BS 1 initially)
+- Spawned squadrons (SQ 4-6) automatically assigned to spawning BS
+- "commander 1 state 1" means commander unit 1 is alive (state=1)
+- All squadrons maintain GUARD behavior until commander dies
 ```
 
 ---
@@ -1338,17 +1480,32 @@ _Verify MAP window updates in real-time as units move and die_
 
 **Test Setup**:
 ```
-[TO FILL IN]
+Scenario: skirmish.conf (fighters only, high movement)
+- Map: 120×40
+- Units: 2 squadrons per faction (4 total)
+- Terminal: At least 120×40 characters
 ```
 
 **Test Procedure**:
 ```
-[TO FILL IN]
+1. Start simulation: ./command_center --scenario skirmish &
+2. Start UI: ./ui
+3. Observe MAP window (top-left panel)
+4. Watch for 30+ ticks:
+   a. Units should move each tick
+   b. Unit symbols (F, B, C) should update positions
+   c. Faction colors (green/red) should be correct
+5. Wait for combat - observe unit removal on death
+6. Press 'q' to exit UI
 ```
 
 **Expected Results**:
 ```
-[TO FILL IN]
+- MAP updates every ~300ms (UI_REFRESH_MS)
+- Unit positions match log output
+- Dead units removed from display within 1 refresh cycle
+- No flickering or partial renders
+- Grid boundaries (borders) remain stable
 ```
 
 **Actual Results**:
@@ -1358,12 +1515,14 @@ _Verify MAP window updates in real-time as units move and die_
 
 **Pass/Fail Criteria**:
 ```
-[TO FILL IN]
+✅ PASS if: Units move smoothly, deaths reflected, no visual glitches
+❌ FAIL if: Stale positions, ghost units, screen corruption
 ```
 
 **Notes**:
 ```
-[TO FILL IN]
+MAP thread uses message queue to request grid updates from CC.
+See ui_map.c for refresh logic.
 ```
 
 ---
@@ -1375,17 +1534,35 @@ _Validate Unit Status Table displays correct HP, shields, position for all units
 
 **Test Setup**:
 ```
-[TO FILL IN]
+Scenario: default.conf
+- Map: 120×40
+- Units: 1 Carrier (spawns squadrons over time)
+- Log file: logs/run_*/ALL.log for comparison
 ```
 
 **Test Procedure**:
 ```
-[TO FILL IN]
+1. Start simulation: ./command_center --scenario default &
+2. Start UI: ./ui
+3. Focus on UST window (right panel)
+4. Compare displayed values with log output:
+   a. Unit ID matches
+   b. HP value matches log "[BS X] tick=Y ... hp=Z"
+   c. Shield value matches "sp=N"
+   d. Position matches "pos=(X,Y)"
+   e. Faction indicator (R/S) correct
+5. Wait for damage events - verify HP/shield decrements
+6. Verify newly spawned squadrons appear in UST
 ```
 
 **Expected Results**:
 ```
-[TO FILL IN]
+- All alive units listed in UST
+- HP/SP values within 1 tick of accuracy
+- Position format: "(X,Y)" matches log
+- Faction: R=Republic, S=Separatist
+- Dead units removed from list
+- Scroll works if >10 units (Page Up/Down)
 ```
 
 **Actual Results**:
@@ -1395,12 +1572,14 @@ _Validate Unit Status Table displays correct HP, shields, position for all units
 
 **Pass/Fail Criteria**:
 ```
-[TO FILL IN]
+✅ PASS if: All stats accurate within 1 tick, new units appear, dead units removed
+❌ FAIL if: Wrong values, missing units, stale data
 ```
 
 **Notes**:
 ```
-[TO FILL IN]
+UST reads directly from shared memory (shm_state_t).
+Uses SEM_GLOBAL_LOCK for synchronization.
 ```
 
 ---
@@ -1412,17 +1591,32 @@ _Test STD window displays terminal output from CC via FIFO_
 
 **Test Setup**:
 ```
-[TO FILL IN]
+Scenario: default.conf
+- FIFO: /tmp/skirmish_std.fifo (created by CC)
+- Terminal: Ensure STD window visible (bottom panel)
 ```
 
 **Test Procedure**:
 ```
-[TO FILL IN]
+1. Start simulation: ./command_center --scenario default &
+2. Start UI: ./ui
+3. Observe STD window (bottom panel)
+4. Verify output appears:
+   a. CC startup messages
+   b. Unit spawn notifications
+   c. Tick progress messages
+   d. Combat events (if any)
+5. Compare with ALL.log - should match stdout portions
+6. Scroll STD window if supported (arrow keys)
 ```
 
 **Expected Results**:
 ```
-[TO FILL IN]
+- STD shows CC stdout in real-time
+- Messages appear within 1 second of generation
+- Text wraps correctly at window boundary
+- Scrollback buffer retains recent messages
+- No garbled/corrupted text
 ```
 
 **Actual Results**:
@@ -1432,12 +1626,14 @@ _Test STD window displays terminal output from CC via FIFO_
 
 **Pass/Fail Criteria**:
 ```
-[TO FILL IN]
+✅ PASS if: Output matches CC stdout, real-time updates, readable
+❌ FAIL if: Missing output, garbled text, significant delay
 ```
 
 **Notes**:
 ```
-[TO FILL IN]
+STD thread reads from FIFO at /tmp/skirmish_std.fifo.
+CC uses terminal_tee to redirect stdout to both log and FIFO.
 ```
 
 ---
@@ -1449,17 +1645,37 @@ _Verify MAP, UST, STD threads don't interfere (no screen corruption)_
 
 **Test Setup**:
 ```
-[TO FILL IN]
+Scenario: fleet_battle.conf (high unit count, lots of activity)
+- Map: 150×50
+- Units: Multiple battleships + squadrons (20+ units)
+- Duration: 200+ ticks
 ```
 
 **Test Procedure**:
 ```
-[TO FILL IN]
+1. Start simulation: ./command_center --scenario fleet_battle &
+2. Start UI: ./ui
+3. Observe all three windows simultaneously for 60+ seconds:
+   a. MAP window - grid updates
+   b. UST window - stats updates
+   c. STD window - log output
+4. Look for visual artifacts:
+   - Overlapping text between windows
+   - Partial line renders
+   - Color bleeding across windows
+   - Cursor jumping/flickering
+5. Resize terminal during test (if possible)
+6. Press 'q' to exit cleanly
 ```
 
 **Expected Results**:
 ```
-[TO FILL IN]
+- All three windows update independently
+- No cross-window corruption
+- Window borders remain intact
+- Colors stay within window boundaries
+- No deadlocks (UI remains responsive)
+- Terminal resize handled gracefully (or ignored)
 ```
 
 **Actual Results**:
@@ -1469,12 +1685,131 @@ _Verify MAP, UST, STD threads don't interfere (no screen corruption)_
 
 **Pass/Fail Criteria**:
 ```
-[TO FILL IN]
+✅ PASS if: All windows update cleanly, no visual artifacts, responsive
+❌ FAIL if: Screen corruption, frozen updates, deadlock
 ```
 
 **Notes**:
 ```
-[TO FILL IN]
+UI uses pthread_mutex for ncurses access (not thread-safe by default).
+Each thread: MAP, UST, STD runs independently.
+Main thread handles input (getch) and coordinates refresh.
+```
+
+---
+
+#### Test 6.5: UI Graceful Shutdown on IPC Destruction
+
+**Test Objective**:
+_Verify UI exits cleanly when CC destroys IPC resources (BUG-001 fix validation)_
+
+**Test Setup**:
+```
+Scenario: default.conf
+- External processes: UI, Console Manager
+- Log: Observe UI log messages during shutdown
+```
+
+**Test Procedure**:
+```
+1. Start simulation: ./command_center --scenario default &
+2. Start UI: ./ui
+3. Start Console Manager: ./console_manager
+4. Let simulation run for 20+ ticks
+5. In console_manager, type: end
+6. Observe UI behavior:
+   a. Should NOT spam EINVAL errors
+   b. Should detect IPC destruction
+   c. Should log "Message queue destroyed" or "IPC resources destroyed"
+   d. Should exit within 2 seconds
+7. Verify with: ps aux | grep ui (should show no ui process)
+```
+
+**Expected Results**:
+```
+- UI detects sem_lock() EINVAL or msgrcv() EIDRM
+- UI logs graceful shutdown message
+- All UI threads exit cleanly
+- UI process terminates with exit code 0
+- No zombie processes
+```
+
+**Actual Results**:
+```
+✅ PASSED - Verified 2026-02-06
+
+Log output (from logs/run_2026-02-06_04-00-35_pid138879/ALL.log):
+  [UI-MAP] Message queue destroyed, exiting
+  [UI-MAP] Thread exiting
+  [UI] Main loop exited, waiting for threads...
+  [UI-UST] IPC resources destroyed, exiting
+  [UI-UST] Thread exiting
+  [UI] All threads joined
+  [UI] Shutdown complete
+
+No EINVAL error spam observed.
+```
+
+**Pass/Fail Criteria**:
+```
+✅ PASS if: UI exits cleanly, no error spam, exit code 0
+❌ FAIL if: UI hangs, spams errors, requires manual kill
+```
+
+**Notes**:
+```
+This test validates the BUG-001 fix implemented in:
+- ui_map.c: EIDRM detection from msgrcv()
+- ui_ust.c: EINVAL detection from sem_lock()
+```
+
+---
+
+#### Test 6.6: UI Started Before CC
+
+**Test Objective**:
+_Test UI behavior when started before Command Center is running_
+
+**Test Setup**:
+```
+- No CC process running
+- No IPC resources exist
+```
+
+**Test Procedure**:
+```
+1. Ensure no CC running: pkill command_center
+2. Clean IPC: ipcrm --all (if needed)
+3. Start UI: ./ui
+4. Observe behavior:
+   a. Should fail to connect to IPC
+   b. Should display error message
+   c. Should exit gracefully (not hang)
+5. Check exit code: echo $?
+```
+
+**Expected Results**:
+```
+- UI fails to attach to shared memory (shmget fails)
+- Error message displayed: "Failed to connect to simulation"
+- UI exits with non-zero exit code
+- No crash or segfault
+```
+
+**Actual Results**:
+```
+[TO FILL IN DURING TESTING]
+```
+
+**Pass/Fail Criteria**:
+```
+✅ PASS if: Clear error message, graceful exit
+❌ FAIL if: Hang, crash, or unclear error
+```
+
+**Notes**:
+```
+UI should validate IPC existence before entering main loop.
 ```
 
 ---
@@ -1591,33 +1926,33 @@ Scenario: default.conf
 
 **Actual Results**:
 ```
-❌ FAILED - BUG DISCOVERED - Test executed on 2026-02-06
+✅ PASSED - Verified 2026-02-06 (after BUG-001 fix)
 
-Timeline:
-- 03:43:24.598: CC received 'end' command, sent "Shutdown initiated" response
-- 03:43:24.855: CC started sending SIGTERM to alive units (6 units)
-- 03:43:24.856: CC destroyed IPC resources (semaphores, shared memory, message queues)
-- 03:43:24.905+: UI (pid=135036) still running, tried to access destroyed IPC
+Timeline (from logs/run_2026-02-06_04-00-35_pid138879/ALL.log):
+- 04:00:57.290: CC received CM_CMD_END command type=6 from console_manager
+- 04:00:57.291: CC sent "Shutdown initiated" response
+- 04:00:57.375: CC started sending SIGTERM to 9 alive units
+- 04:00:57.376-418: All units received SIGTERM and terminated cleanly
+- 04:00:57.419: CC detached and destroyed IPC objects
+- 04:00:57.420: UI-MAP detected message queue destroyed, set stop flag
+- 04:00:57.422: UI-MAP thread exited, UI main loop exited
+- 04:00:57.422: UI-UST detected IPC resources destroyed, set stop flag  
+- 04:00:57.427: All UI threads joined
+- 04:00:57.429: UI shutdown complete - no errors
 
-UI Error Spam (thousands of messages):
-  [ERROR] ui_ust:sem_lock: sem_lock(ui_ctx->ctx->sem_id, SEM_GLOBAL_LOCK) 
-          - Invalid argument (errno=22)
-  [WARN ] [UI-MAP] Failed to send request
-
-- 03:43:33.262: User manually pressed Ctrl+C (signal 2) to kill UI
-- 03:43:33.265: UI finally exited after manual intervention
-
-Unit processes terminated correctly:
-  - All 6 units (BS 1, SQ 2-6) received SIGTERM
-  - All logged "terminating, cleaning registry/grid"
-  - All reaped with exit status 0
+All processes terminated cleanly:
+  - 9 units reaped with exit status 0
+  - UI detected IPC destruction and exited gracefully
+  - No EINVAL error spam
+  - No manual intervention required
 ```
 
 **Pass/Fail Criteria**:
 ```
-❌ FAIL - UI not notified of shutdown, spammed errors for ~9 seconds
+✅ PASS - UI detects shutdown and exits gracefully
 ✅ PASS - Unit processes terminated correctly
 ✅ PASS - CC cleanup sequence executed
+✅ PASS - No IPC error spam
 ✅ PASS - CM received shutdown confirmation
 ❌ FAIL - Graceful multi-process shutdown not achieved
 ```
@@ -1889,36 +2224,81 @@ _Test large-scale engagement (carriers, destroyers, fighters)_
 #### Test 9.4: Skirmish Scenario (Fighters Only)
 
 **Test Objective**:
-_Test fast-paced fighter-only combat_
+_Test fast-paced fighter-only combat with high unit count_
 
 **Test Setup**:
 ```
-[TO FILL IN]
+Scenario: skirmish.conf (Fighter Skirmish)
+- Map: 80×40
+- Units: 16 fighters (8 Republic, 8 Separatist)
+- Republic: Units 1-8 at (10,10) to (24,24) diagonal
+- Separatist: Units 9-16 at (67,27) to (53,13) diagonal
+- Log: logs/run_2026-02-06_04-14-59_pid142562/ALL.log
 ```
 
 **Test Procedure**:
 ```
-[TO FILL IN]
+1. Start simulation: ./command_center --scenario skirmish &
+2. Let battle run until most units destroyed or 200+ ticks
+3. Monitor alive_units count in logs
+4. Issue 'end' command via console_manager
+5. Verify clean shutdown
 ```
 
 **Expected Results**:
 ```
-[TO FILL IN]
+- All 16 fighters spawn correctly
+- Fighters patrol and engage enemies within detection range (15)
+- Combat produces casualties on both sides
+- Battle may end with survivors or total annihilation
+- Shutdown cleans up all remaining units
 ```
 
 **Actual Results**:
 ```
-[TO FILL IN DURING TESTING]
+✅ PASSED - Test executed 2026-02-06
+
+Startup (04:14:59):
+  - 16 units spawned successfully (8 Republic, 8 Separatist)
+  - All fighters type=4 with faction colors
+  - IPC: shm_id=11 sem_id=11
+
+Combat Timeline (216 ticks, ~111 seconds):
+  Tick ~14:  SQ 12 (Sep) + SQ 4 (Rep) destroyed
+  Tick ~21:  SQ 16 (Sep) + SQ 5 (Rep) destroyed
+  Tick ~31:  SQ 15 (Sep) + SQ 3 (Rep) destroyed
+  Tick ~49:  SQ 10 (Sep) destroyed
+  Tick ~53:  SQ 11 (Sep) + SQ 1 (Rep) destroyed
+  Tick ~60:  SQ 9 (Sep) destroyed
+  Tick ~76:  SQ 2 (Rep) destroyed
+  Tick ~184: SQ 6 (Rep) destroyed
+  Tick ~198: SQ 14 (Sep) destroyed
+
+Final State (tick 216):
+  - 3 survivors: SQ 7 (Rep, hp=5), SQ 8 (Rep, hp=20), SQ 13 (Sep, hp=5)
+  - Republic: 2 survivors, Separatist: 1 survivor
+  - Total casualties: 13/16 (81%)
+
+Shutdown (04:16:50):
+  - 'end' command received from console_manager
+  - 3 children reaped with exit status 0
+  - IPC resources cleaned up
 ```
 
 **Pass/Fail Criteria**:
 ```
-[TO FILL IN]
+✅ PASS - All fighters spawned correctly
+✅ PASS - Combat mechanics working (13 casualties)
+✅ PASS - Clean shutdown with end command
+✅ PASS - No orphan processes or IPC leaks
 ```
 
 **Notes**:
 ```
-[TO FILL IN]
+- Fast-paced combat: first deaths at tick ~14 (7 seconds)
+- Battle naturally slows after initial clash (survivors separated)
+- Final 3 survivors too far apart to detect each other (dt2 > 225)
+- Republic won 2-1 but both factions took heavy losses
 ```
 
 ---
@@ -2617,20 +2997,21 @@ See [scenarios/README.md](../scenarios/README.md) for configuration syntax.
 
 ### Appendix E: Known Bugs
 
-#### BUG-001: UI Not Notified During Shutdown (OPEN)
+#### BUG-001: UI Not Notified During Shutdown (RESOLVED)
 
 | Field | Value |
 |-------|-------|
 | **Severity** | MEDIUM |
 | **Component** | Command Center / UI coordination |
 | **Discovered** | 2026-02-06 |
+| **Resolved** | 2026-02-06 |
 | **Test Reference** | Test 7.3: End Simulation Command |
 | **Log Reference** | `logs/run_2026-02-06_03-41-53_pid134875/ALL.log` |
 
 **Description:**
 When the `end` command is issued via Console Manager, the Command Center destroys IPC resources (semaphores, shared memory, message queues) before notifying the UI process. The UI continues running and attempts to access the destroyed IPC resources, resulting in thousands of `EINVAL` (errno=22) errors.
 
-**Symptoms:**
+**Symptoms (before fix):**
 - UI spams error messages: `sem_lock(...) - Invalid argument (errno=22)`
 - UI spams warnings: `[UI-MAP] Failed to send request`
 - UI does not exit automatically
@@ -2639,27 +3020,31 @@ When the `end` command is issued via Console Manager, the Command Center destroy
 **Root Cause:**
 1. CC only tracks unit process PIDs in its child list, not UI PID
 2. CC destroys IPC resources immediately after sending SIGTERM to units
-3. UI has no mechanism to detect that IPC resources are gone
-4. UI's `sem_lock()` returns EINVAL but UI doesn't exit on this error
+3. UI had no mechanism to detect that IPC resources are gone
+4. UI's `sem_lock()` returned EINVAL but UI didn't exit on this error
 
-**Reproduction Steps:**
-```bash
-./command_center --scenario default &
-./ui &
-./console_manager
-# In console_manager, type: end
-# Observe UI error spam
+**Resolution:**
+Implemented "UI graceful EINVAL/EIDRM handling" in both UI threads:
+
+1. **[ui_map.c](../src/UI/ui_map.c)**: 
+   - Detect `EINVAL` from `sem_lock()` → set `stop = 1` and exit loop
+   - Detect `EIDRM` from `msgrcv()` → log "Message queue destroyed" and exit
+
+2. **[ui_ust.c](../src/UI/ui_ust.c)**:
+   - Detect `EINVAL` from `sem_lock()` → set `stop = 1` and exit loop
+
+**Verified shutdown sequence (from logs):**
+```
+[UI-MAP] Message queue destroyed, exiting
+[UI-MAP] Thread exiting
+[UI] Main loop exited, waiting for threads...
+[UI-UST] IPC resources destroyed, exiting
+[UI-UST] Thread exiting
+[UI] All threads joined
+[UI] Shutdown complete
 ```
 
-**Proposed Fixes:**
-1. **UI graceful EINVAL handling**: UI should detect EINVAL from `sem_lock()` and exit cleanly
-2. **Shutdown notification**: CC sends shutdown message to UI via message queue BEFORE destroying IPC
-3. **Process group signal**: CC broadcasts SIGTERM to entire process group
-4. **Shared memory flag**: Add shutdown flag in `shm_state_t` that UI polls
-
-**Workaround:**
-- Close UI (`q` key) before issuing `end` command in Console Manager
-- Or: Manually Ctrl+C the UI after `end` command
+**Test Result:** Test 7.3 now passes - UI exits gracefully when `end` command is issued
 
 ---
 

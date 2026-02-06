@@ -59,7 +59,15 @@ static void render_ust(ui_context_t *ui_ctx) {
     mvwprintw(win, 0, 2, " UNIT STATS ");
     
     /* Lock shared memory and read unit data */
-    if (CHECK_SYS_CALL_NONFATAL(sem_lock(ui_ctx->ctx->sem_id, SEM_GLOBAL_LOCK), "ui_ust:sem_lock") != 0) {
+    int lock_ret = sem_lock(ui_ctx->ctx->sem_id, SEM_GLOBAL_LOCK);
+    if (lock_ret != 0) {
+        if (errno == EINVAL) {
+            /* Semaphore destroyed - IPC resources gone, exit gracefully */
+            LOGI("[UI-UST] IPC resources destroyed, exiting");
+            ui_ctx->stop = 1;
+            pthread_mutex_unlock(&ui_ctx->ui_lock);
+            return;
+        }
         mvwprintw(win, 1, 1, "Failed to lock shared memory");
         wrefresh(win);
         pthread_mutex_unlock(&ui_ctx->ui_lock);
@@ -73,7 +81,7 @@ static void render_ust(ui_context_t *ui_ctx) {
     unit_entity_t units[MAX_UNITS+1];
     memcpy(units, ui_ctx->ctx->S->units, sizeof(units));
     
-    CHECK_SYS_CALL_NONFATAL(sem_unlock(ui_ctx->ctx->sem_id, SEM_GLOBAL_LOCK), "ui_ust:sem_unlock");
+    sem_unlock(ui_ctx->ctx->sem_id, SEM_GLOBAL_LOCK);
     
     /* Display header */
     mvwprintw(win, 0, win_w - 15, " Tick:%u ", tick);

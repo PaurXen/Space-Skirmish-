@@ -83,11 +83,14 @@ IPC Resources (System V)
 
 **IPC resource lifecycle management** - Create, attach, and destroy IPC objects.
 
-**Location**: `src/ipc/ipc_context.c`
+**Location**: `src/ipc/ipc_context.c`\
+[\<ipc_context.c\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/ipc/ipc_context.c)
 
 **Key Functions**:
 
 #### `ipc_create()`
+[\<ipc_create\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/ipc/ipc_context.c?plain=1#L83-L171)
+
 Creates or resets IPC resources for a fresh simulation run.
 
 **Responsibilities**:
@@ -112,6 +115,8 @@ if (ipc_create(&ctx, "./ipc.key") == -1) {
 ```
 
 #### `ipc_attach()`
+[\<ipc_attach\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/ipc/ipc_context.c?plain=1#L173-L236)
+
 Attach to existing IPC objects created by Command Center.
 
 **Responsibilities**:
@@ -132,6 +137,8 @@ if (ipc_attach(&ctx, "./ipc.key") == -1) {
 ```
 
 #### `ipc_detach()`
+[\<ipc_detach\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/ipc/ipc_context.c?plain=1#L238-L254)
+
 Detach from shared memory without removing IPC objects.
 
 **Safe for**: All processes (CC, units, CM, UI)
@@ -142,6 +149,8 @@ ipc_detach(&ctx);
 ```
 
 #### `ipc_destroy()`
+[\<ipc_destroy\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/ipc/ipc_context.c?plain=1#L256-L302)
+
 Remove IPC objects from the system.
 
 **⚠️ Owner Only**: Should only be called by Command Center during cleanup.
@@ -163,11 +172,13 @@ if (ctx.owner) {
 
 **Semaphore operations** - Wrappers around System V `semop(2)` with EINTR handling.
 
-**Location**: `src/ipc/semaphores.c`
+**Location**: `src/ipc/semaphores.c`\
+[\<semaphores.c\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/ipc/semaphores.c)
 
 **Key Functions**:
 
 #### `sem_op_retry()`
+[\<sem_op_retry\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/ipc/semaphores.c?plain=1#L20-L32)
 Perform semaphore operation, retrying on `EINTR`.
 
 **Use Case**: When interruption is not a concern (e.g., quick unlock operations).
@@ -180,6 +191,8 @@ if (sem_op_retry(sem_id, &op, 1) == -1) {
 ```
 
 #### `sem_op_intr()`
+[\<sem_op_intr\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/ipc/semaphores.c?plain=1#L34-L59)
+
 Perform semaphore operation with **cooperative cancellation** support.
 
 **Use Case**: Tick barrier synchronization where units need to exit cleanly on `SIGTERM`.
@@ -203,6 +216,9 @@ if (sem_wait_intr(sem_id, SEM_TICK_START, -1, &g_stop) == -1) {
 ```
 
 #### `sem_lock()` / `sem_unlock()`
+[\<sem_lock\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/ipc/semaphores.c?plain=1#L61-L70)\
+[\<sem_unlock\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/ipc/semaphores.c?plain=1#L78-L81)
+
 Convenience wrappers for mutex-style locking.
 
 ```c
@@ -213,7 +229,7 @@ if (sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK) == -1) {
 }
 
 // Critical section: modify shared memory
-ctx->S->units[unit_id].hp -= damage;
+ctx->S->units[unit_id].dmg_payload += damage;
 
 // Release lock
 if (sem_unlock(ctx->sem_id, SEM_GLOBAL_LOCK) == -1) {
@@ -222,6 +238,8 @@ if (sem_unlock(ctx->sem_id, SEM_GLOBAL_LOCK) == -1) {
 ```
 
 #### `sem_lock_intr()`
+[\<sem_lock_intr\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/ipc/semaphores.c?plain=1#L72-L75)
+
 Interruptible lock acquisition.
 
 **Use Case**: Acquire lock with ability to cancel on shutdown signal.
@@ -234,7 +252,21 @@ if (sem_lock_intr(ctx->sem_id, SEM_GLOBAL_LOCK, &g_stop) == -1) {
 }
 ```
 
+#### `sem_wait_intr()`
+[\<sem_wait_intr\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/ipc/semaphores.c?plain=1#L83-L91)
+
+Wait (decrement) semaphore with cooperative cancellation support.
+
+**Use Case**: Tick barrier wait operations with shutdown support.
+
+```c
+// Wait on tick start barrier
+sem_wait_intr(ctx->sem_id, SEM_TICK_START, -1, &g_stop);
+```
+
 #### `sem_post_retry()`
+[\<sem_post_retry\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/ipc/semaphores.c?plain=1#L93-L99)
+
 Post (increment) semaphore, retrying on EINTR.
 
 ```c
@@ -248,9 +280,10 @@ sem_post_retry(ctx->sem_id, SEM_TICK_DONE, 1);
 
 **Message queue operations** - Asynchronous message passing between processes.
 
-**Location**: `src/ipc/ipc_mesq.c`
+**Location**: `src/ipc/ipc_mesq.c`\
+[\<ipc_mesq.c\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/ipc/ipc_mesq.c)
 
-**Message Types**:
+**Message Types** ([ipc_mesq.h L10](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/ipc_mesq.h?plain=1#L10)):
 
 | Message | Direction | Purpose |
 |---------|-----------|---------|
@@ -262,6 +295,12 @@ sem_post_retry(ctx->sem_id, SEM_TICK_DONE, 1);
 | `MSG_CM_CMD` | CM → CC | Console Manager commands |
 | `MSG_UI_MAP_REQ` | UI → CC | Request map snapshot |
 | `MSG_UI_MAP_REP` | CC → UI | Map snapshot response |
+
+**Message Structures**:\
+[\<mq_spawn_req_t\\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/ipc_mesq.h?plain=1#L22-L31)
+[\<mq_damage_t\\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/ipc_mesq.h?plain=1#L55-L59)
+[\<mq_order_t\\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/ipc_mesq.h?plain=1#L61-L65)
+[\<mq_cm_cmd_t\\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/ipc_mesq.h?plain=1#L67-L79)
 
 **Key Functions**:
 
@@ -361,11 +400,13 @@ if (mq_try_recv_cm_cmd(ctx->q_req, &cmd) == 1) {
 
 **Shared memory data structures** - Central game state definition.
 
-**Location**: `include/ipc/shared.h`
+**Location**: `include/ipc/shared.h`\
+[\<shared.h\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/shared.h)
 
 **Key Definitions**:
 
 #### Grid Configuration
+[\<Grid Configuration\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/shared.h?plain=1#L22-L26)
 ```c
 #define M 120           // Grid width
 #define N 40            // Grid height
@@ -374,6 +415,10 @@ if (mq_try_recv_cm_cmd(ctx->q_req, &cmd) == 1) {
 ```
 
 #### Enumerations
+[\<weapon_type_t\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/shared.h?plain=1#L48-L54)\
+[\<unit_order_t\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/shared.h?plain=1#L57-L61)\
+[\<faction_t\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/shared.h?plain=1#L64-L68)\
+[\<unit_type_t\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/shared.h?plain=1#L71-L75)
 ```c
 typedef enum {
     NONE = 0, LR_CANNON = 1, MR_CANNON = 2, SR_CANNON = 3,
@@ -397,6 +442,7 @@ typedef enum {
 ```
 
 #### Unit Entity
+[\<unit_entity_t\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/shared.h?plain=1#L36-L45)
 ```c
 typedef struct {
     pid_t pid;              // Process ID for signaling
@@ -410,6 +456,7 @@ typedef struct {
 ```
 
 #### Global Shared State
+[\<shm_state_t\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/shared.h?plain=1#L90-L106)
 ```c
 typedef struct {
     uint32_t magic;         // SHM_MAGIC (0x53504143 "SPAC")
@@ -451,9 +498,9 @@ typedef struct {
 // Read grid cell
 unit_id_t occupant = ctx->S->grid[x][y];
 
-// Update unit HP (requires lock)
+// Update unit damage payload (requires lock)
 sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK);
-ctx->S->units[unit_id].hp -= damage;
+ctx->S->units[unit_id].dmg_payload += damage;
 sem_unlock(ctx->sem_id, SEM_GLOBAL_LOCK);
 
 // Increment tick counter
@@ -466,7 +513,8 @@ ctx->S->ticks++;
 
 **Purpose**: Synchronization and mutual exclusion.
 
-**Semaphore Set** (3 semaphores):
+**Semaphore Set** (3 semaphores):\
+[\<Semaphore Indices\\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/shared.h?plain=1#L111-L121)
 
 #### `SEM_GLOBAL_LOCK` (Index 0)
 - **Type**: Binary semaphore (mutex)
@@ -769,8 +817,10 @@ while (!g_stop) {
 sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK);
 
 // Critical section: ONLY shared memory modifications
-ctx->S->units[id].hp -= damage;
-if (ctx->S->units[id].hp <= 0) {
+ctx->S->units[id].dmg_payload += damage;
+
+// Mark dead if needed (HP tracking is process-local)
+if (should_die) {
     ctx->S->units[id].alive = 0;
     ctx->S->grid[x][y] = 0;
 }
@@ -789,6 +839,7 @@ sem_unlock(ctx->sem_id, SEM_GLOBAL_LOCK);
 ## Data Structures
 
 ### `ipc_ctx_t`
+[\<ipc_ctx_t\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/ipc_context.h?plain=1#L14-L28)
 
 **Purpose**: Runtime context for IPC resources.
 
@@ -828,6 +879,7 @@ if (ctx.owner) {
 ---
 
 ### `shm_state_t`
+[\<shm_state_t\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/shared.h?plain=1#L90-L106)
 
 **Purpose**: Global simulation state in shared memory.
 
@@ -875,6 +927,7 @@ for (int i = 1; i <= MAX_UNITS; i++) {
 ## API Reference
 
 ### IPC Context API
+[\<ipc_context.h\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/ipc_context.h)
 
 ```c
 int ipc_create(ipc_ctx_t *ctx, const char *ftok_path);
@@ -911,6 +964,7 @@ int ipc_destroy(ipc_ctx_t *ctx);
 ---
 
 ### Semaphore API
+[\<semaphores.h\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/semaphores.h)
 
 ```c
 int sem_op_retry(int semid, struct sembuf *ops, size_t nops);
@@ -955,6 +1009,7 @@ int sem_post_retry(int semid, unsigned short semnum, short delta);
 ---
 
 ### Message Queue API
+[\<ipc_mesq.h\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/ipc_mesq.h)
 
 #### Damage Messages
 ```c
@@ -1132,14 +1187,14 @@ void process_damage_if_pending(ipc_ctx_t *ctx, unit_id_t unit_id,
         stats->hp -= total_damage;
     }
     
-    // Update shared memory
-    sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK);
-    ctx->S->units[unit_id].hp = stats->hp;
-    ctx->S->units[unit_id].sh = stats->sh;
+    // Update shared memory if dead
     if (stats->hp <= 0) {
-        mark_dead(ctx, unit_id);
+        sem_lock(ctx->sem_id, SEM_GLOBAL_LOCK);
+        ctx->S->units[unit_id].alive = 0;
+        ctx->S->grid[ctx->S->units[unit_id].position.x]
+                    [ctx->S->units[unit_id].position.y] = 0;
+        sem_unlock(ctx->sem_id, SEM_GLOBAL_LOCK);
     }
-    sem_unlock(ctx->sem_id, SEM_GLOBAL_LOCK);
 }
 ```
 
@@ -1149,9 +1204,9 @@ void process_damage_if_pending(ipc_ctx_t *ctx, unit_id_t unit_id,
 
 ```
 src/ipc/
-├── ipc_context.c         # Create/attach/destroy IPC
-├── semaphores.c          # Semaphore operations
-└── ipc_mesq.c            # Message queue operations
+├── ipc_context.c         # Create/attach/destroy IPC (303 lines)
+├── semaphores.c          # Semaphore operations (98 lines)
+└── ipc_mesq.c            # Message queue operations (148 lines)
 
 include/ipc/
 ├── ipc_context.h         # IPC context structure & API
@@ -1159,6 +1214,14 @@ include/ipc/
 ├── ipc_mesq.h            # Message queue structures & API
 └── shared.h              # Shared memory data structures
 ```
+
+[\<ipc_context.c\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/ipc/ipc_context.c)\
+[\<semaphores.c\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/ipc/semaphores.c)\
+[\<ipc_mesq.c\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/ipc/ipc_mesq.c)\
+[\<ipc_context.h\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/ipc_context.h)\
+[\<semaphores.h\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/semaphores.h)\
+[\<ipc_mesq.h\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/ipc_mesq.h)\
+[\<shared.h\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/shared.h)
 
 ---
 

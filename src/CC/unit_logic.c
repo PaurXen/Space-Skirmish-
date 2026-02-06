@@ -13,7 +13,7 @@
 
 typedef struct { int16_t dx, dy; } offset_t;
 
-float damage_multiplyer(unit_type_t unit, unit_type_t target) {
+float damage_multiplier(unit_type_t unit, unit_type_t target) {
     switch (unit) {
         case TYPE_FLAGSHIP:
             if (target == TYPE_CARRIER) return 1.5f;
@@ -62,7 +62,7 @@ st_points_t damage_to_target(unit_entity_t *attacker, unit_entity_t *target, wea
         return 0;
     }
 
-    return (st_points_t)(damage_multiplyer(attacker->type, target->type) * (float)weapon->dmg);
+    return (st_points_t)(damage_multiplier(attacker->type, target->type) * (float)weapon->dmg);
     
 }
 

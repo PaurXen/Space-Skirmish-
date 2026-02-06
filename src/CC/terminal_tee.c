@@ -35,7 +35,7 @@ pid_t start_terminal_tee(const char *run_dir) {
     char out_path[600];
     snprintf(out_path, sizeof(out_path), "%s/ALL.term.log", run_dir);
 
-    int out_fd = open(out_path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    int out_fd = open(out_path, O_WRONLY | O_CREAT | O_APPEND, 0600);
     if (out_fd == -1) {
         perror("open ALL.term.log");
         close(pfd[0]);

@@ -70,7 +70,7 @@ static void open_global_log(void) {
     char all_path[600];
     snprintf(all_path, sizeof(all_path), "%s/ALL.log", g_run_dir);
 
-    g_all_fd = open(all_path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    g_all_fd = open(all_path, O_WRONLY | O_CREAT | O_APPEND, 0600);
     if (g_all_fd == -1) {
         perror("[LOG] open ALL.log");
         fprintf(stderr, "[LOG] Failed to open '%s': %s (errno=%d)\n", 

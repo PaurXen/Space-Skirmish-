@@ -154,15 +154,23 @@ These systems embody several design principles:
 
 ```
 include/
-├── error_handler.h      # Error types, codes, macros
-├── log.h                # Logging API and macros
-└── tee_spawn.h          # Terminal tee spawn interface
+├── error_handler.h      # Error types, codes, macros (146 lines)
+├── log.h                # Logging API and macros (48 lines)
+└── tee_spawn.h          # Terminal tee spawn interface (14 lines)
 
 src/
-├── error_handler.c      # Error handling implementation
-├── utils.c              # Logging backend implementation
+├── error_handler.c      # Error handling implementation (136 lines)
+├── utils.c              # Logging backend implementation (234 lines)
 └── CC/
-    └── terminal_tee.c   # Terminal tee process management
+    └── terminal_tee.c   # Terminal tee process management (114 lines)
+```
+
+[\<error_handler.h\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/error_handler.h)\
+[\<log.h\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/log.h)\
+[\<tee_spawn.h\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/tee_spawn.h)\
+[\<error_handler.c\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/error_handler.c)\
+[\<utils.c\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/utils.c)\
+[\<terminal_tee.c\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/terminal_tee.c)
 
 logs/run_YYYY-MM-DD_HH-MM-SS_pidXXXXX/
 ├── ALL.log              # Combined log from all processes
@@ -183,14 +191,15 @@ logs/run_YYYY-MM-DD_HH-MM-SS_pidXXXXX/
 The error handling system provides consistent error reporting, categorization, and recovery mechanisms across the entire application.
 
 ### Error Levels
+[\<error_level_t\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/error_handler.h?plain=1#L9-L14)
 
 Three severity levels determine how errors are handled:
 
 ```c
 typedef enum {
-    ERR_FATAL,    // Unrecoverable error - exit immediately
-    ERR_ERROR,    // Recoverable error - log and continue
-    ERR_WARNING   // Advisory message - log only
+    ERR_FATAL,      /* Critical error - program cannot continue */
+    ERR_ERROR,      /* Error condition - operation failed */
+    ERR_WARNING     /* Warning - operation may have issues */
 } error_level_t;
 ```
 
@@ -203,196 +212,271 @@ typedef enum {
 | `ERR_WARNING` | Unexpected but handled         | Log warning, continue       | Missing config parameter          |
 
 ### Application Error Codes
+[\<app_error_t\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/error_handler.h?plain=1#L16-L40)
 
-22 standardized error codes cover domain-specific failures:
+20 standardized error codes cover domain-specific failures:
 
 ```c
 typedef enum {
-    ERR_INVALID_INPUT = 1,   // Invalid user input or parameters
-    ERR_SHM_ERROR,           // Shared memory operation failed
-    ERR_SEM_ERROR,           // Semaphore operation failed
-    ERR_MSGQ_ERROR,          // Message queue operation failed
-    ERR_FORK_ERROR,          // Fork/exec process creation failed
-    ERR_PIPE_ERROR,          // Pipe creation/operation failed
-    ERR_FILE_ERROR,          // File I/O operation failed
-    ERR_MEMORY_ERROR,        // Memory allocation failed
-    ERR_THREAD_ERROR,        // Thread creation/synchronization failed
-    ERR_IPC_ERROR,           // Generic IPC error
-    ERR_UI_ERROR,            // User interface operation failed
-    ERR_INIT_ERROR,          // Initialization sequence failed
-    ERR_CONFIG_ERROR,        // Configuration parsing/validation failed
-    ERR_STATE_ERROR,         // Invalid state transition
-    ERR_TIMEOUT_ERROR,       // Operation timed out
-    ERR_NETWORK_ERROR,       // Network communication failed (future)
-    ERR_PARSE_ERROR,         // Parsing error (config, commands)
-    ERR_VALIDATION_ERROR,    // Data validation failed
-    ERR_RESOURCE_ERROR,      // Resource exhaustion
-    ERR_PERMISSION_ERROR,    // Permission denied
-    ERR_UNKNOWN_ERROR,       // Unknown/unclassified error
-    ERR_NOT_IMPLEMENTED      // Feature not yet implemented
+    ERR_OK = 0,
+    ERR_INVALID_INPUT,       // Invalid user input or parameters
+    ERR_INVALID_RANGE,       // Value out of valid range
+    ERR_INVALID_COORD,       // Invalid coordinates
+    ERR_QUEUE_FULL,          // Queue is full
+    ERR_QUEUE_EMPTY,         // Queue is empty
+    ERR_SHM_ERROR,           // Shared memory error
+    ERR_SEM_ERROR,           // Semaphore error
+    ERR_MSGQ_ERROR,          // Message queue error
+    ERR_FORK_ERROR,          // Fork error
+    ERR_PIPE_ERROR,          // Pipe error
+    ERR_FILE_ERROR,          // File operation error
+    ERR_MEMORY_ERROR,        // Memory allocation error
+    ERR_TIMEOUT,             // Operation timeout
+    ERR_INVALID_STATE,       // Invalid state
+    ERR_UNIT_NOT_FOUND,      // Unit not found
+    ERR_WEAPON_NOT_FOUND,    // Weapon not found
+    ERR_INVALID_UNIT_TYPE,   // Invalid unit type
+    ERR_INVALID_WEAPON_TYPE, // Invalid weapon type
+    ERR_PARSE_ERROR,         // Parse error
+    ERR_IPC_ERROR,           // IPC communication error
+    ERR_LOG_ERROR            // Logging error
 } app_error_t;
 ```
 
 ### Error Handling Macros
+[\<Error Macros\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/error_handler.h?plain=1#L56-L99)
 
 #### CHECK_SYS_CALL
+[\<CHECK_SYS_CALL\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/error_handler.h?plain=1#L75-L86)
 
 Wraps system calls that return -1 on error and set `errno`:
 
 ```c
-#define CHECK_SYS_CALL(expr) \
+#define CHECK_SYS_CALL(call, context) \
     ({ \
-        typeof(expr) _result = (expr); \
-        if (_result == -1) { \
-            fprintf(stderr, "[ERROR] %s:%d: " #expr " failed: %s (errno=%d)\n", \
-                    __FILE__, __LINE__, strerror(errno), errno); \
-            log_msg(LOG_LVL_ERROR, #expr " failed: %s (errno=%d)", \
-                    strerror(errno), errno); \
+        int _ret = (call); \
+        if (_ret == -1) { \
+            HANDLE_SYS_ERROR(context, #call); \
         } \
-        _result; \
+        _ret; \
     })
 ```
 
 **Features:**
 - Evaluates expression exactly once (statement expression)
-- Logs errno description automatically
+- Automatically calls `HANDLE_SYS_ERROR` on failure (exits for fatal errors)
 - Returns original result for further checking
 - Preserves errno value
 
 **Usage:**
 ```c
-if (CHECK_SYS_CALL(fd = open(path, O_RDONLY)) == -1) {
-    HANDLE_SYS_ERROR("open", ERR_FILE_ERROR);
-}
+int fd = CHECK_SYS_CALL(open(path, O_RDONLY), "open file");
 ```
 
 #### CHECK_SYS_CALL_NONFATAL
+[\<CHECK_SYS_CALL_NONFATAL\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/error_handler.h?plain=1#L88-L99)
 
-Identical to `CHECK_SYS_CALL` but for non-fatal operations where logging is desired but errors are expected:
+Similar to `CHECK_SYS_CALL` but uses non-fatal error handling:
 
 ```c
-#define CHECK_SYS_CALL_NONFATAL(expr) CHECK_SYS_CALL(expr)
+#define CHECK_SYS_CALL_NONFATAL(call, context) \
+    ({ \
+        int _ret = (call); \
+        if (_ret == -1) { \
+            HANDLE_SYS_ERROR_NONFATAL(context, #call); \
+        } \
+        _ret; \
+    })
 ```
 
 **Usage:**
 ```c
-// Close may fail if FD already closed - log but don't panic
-if (CHECK_SYS_CALL_NONFATAL(close(fd)) == -1) {
+// Close may fail if FD already closed - log but don't exit
+int ret = CHECK_SYS_CALL_NONFATAL(close(fd), "close fd");
+if (ret == -1) {
     // Already logged, just continue
 }
 ```
 
 #### HANDLE_SYS_ERROR
+[\<HANDLE_SYS_ERROR\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/error_handler.h?plain=1#L56-L61)
 
-Handles system call errors by mapping `errno` to an application error code and terminating:
+Handles system call errors using `errno` and terminates with `ERR_FATAL`:
 
 ```c
-#define HANDLE_SYS_ERROR(syscall_name, app_err) \
-    handle_error(ERR_FATAL, app_err, \
-                 "System call '%s' failed: %s (errno=%d)", \
-                 syscall_name, strerror(errno), errno)
+#define HANDLE_SYS_ERROR(context, msg) \
+    handle_error(ERR_FATAL, context, ERR_OK, 1, "%s", msg)
 ```
 
 **Parameters:**
-- `syscall_name`: Name of the system call (e.g., "shm_open")
-- `app_err`: Application error code (e.g., `ERR_SHM_ERROR`)
+- `context`: Context string (e.g., function name, operation)
+- `msg`: Error message describing what failed
 
 **Typical Pattern:**
 ```c
-if (CHECK_SYS_CALL(shm_fd = shm_open(name, O_CREAT | O_RDWR, 0600)) == -1) {
-    HANDLE_SYS_ERROR("shm_open", ERR_SHM_ERROR);
+if (shm_fd == -1) {
+    HANDLE_SYS_ERROR("init_shm", "shm_open failed");
 }
+```
+
+#### HANDLE_SYS_ERROR_NONFATAL
+[\<HANDLE_SYS_ERROR_NONFATAL\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/error_handler.h?plain=1#L62-L64)
+
+Non-fatal version that logs but doesn't terminate:
+
+```c
+#define HANDLE_SYS_ERROR_NONFATAL(context, msg) \
+    handle_error(ERR_ERROR, context, ERR_OK, 1, "%s", msg)
+```
+
+#### HANDLE_APP_ERROR
+[\<HANDLE_APP_ERROR\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/error_handler.h?plain=1#L63-L68)
+
+Handles application-specific errors (not using errno):
+
+```c
+#define HANDLE_APP_ERROR(level, context, err_code, msg) \
+    handle_error(level, context, err_code, 0, "%s", msg)
 ```
 
 ### Error Handling Functions
 
 #### handle_error
+[\<handle_error\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/error_handler.c?plain=1#L46-L98)
 
 Central error handling function:
 
 ```c
-void handle_error(error_level_t level, app_error_t err_code, 
-                  const char *fmt, ...);
+void handle_error(error_level_t level, const char *context, 
+                 app_error_t err_code, int use_errno, 
+                 const char *fmt, ...);
 ```
+
+**Parameters:**
+- `level`: Error severity (`ERR_FATAL`, `ERR_ERROR`, `ERR_WARNING`)
+- `context`: Context string (e.g., function name)
+- `err_code`: Application error code (or `ERR_OK` if using errno)
+- `use_errno`: If 1, use `perror()` and errno; if 0, use err_code
+- `fmt`: printf-style format string for additional message
 
 **Behavior:**
 1. Formats error message with `vsnprintf`
-2. Logs error using `log_msg(LOG_LVL_ERROR, ...)`
-3. Prints to stderr if log not initialized
-4. For `ERR_FATAL`: calls `exit(1)` immediately
+2. If `use_errno`: uses `perror()` and includes errno description
+3. If not `use_errno`: uses `get_error_message()` for app error codes
+4. Logs to `LOGE()` or `LOGW()` based on level
+5. For `ERR_FATAL`: calls `log_close()` then `exit(EXIT_FAILURE)`
 
 **Implementation Highlights:**
 ```c
-void handle_error(error_level_t level, app_error_t err_code, 
-                  const char *fmt, ...) {
-    char msg[512];
+void handle_error(error_level_t level, const char *context, 
+                 app_error_t err_code, int use_errno, 
+                 const char *fmt, ...) {
+    char buffer[512];
+    char final_msg[1024];
+    
+    // Format the custom message
     va_list args;
     va_start(args, fmt);
-    vsnprintf(msg, sizeof(msg), fmt, args);
+    vsnprintf(buffer, sizeof(buffer), fmt, args);
     va_end(args);
     
-    // Log structured error
-    log_msg(LOG_LVL_ERROR, "[%s] Code=%d: %s", 
-            level_name(level), err_code, msg);
+    if (use_errno) {
+        // System error - include errno info
+        snprintf(final_msg, sizeof(final_msg), 
+                "[%s] %s: %s - %s (errno=%d)", 
+                error_level_str[level], context, buffer, 
+                strerror(errno), errno);
+        perror(...);
+    } else {
+        // Application error
+        const char *err_msg = get_error_message(err_code);
+        snprintf(final_msg, sizeof(final_msg), 
+                "[%s] %s: %s - %s (code=%d)", 
+                error_level_str[level], context, buffer, 
+                err_msg, err_code);
+    }
     
-    // Also print to stderr for visibility
-    fprintf(stderr, "[%s] Error %d: %s\n", 
-            level_name(level), err_code, msg);
-    
-    if (level == ERR_FATAL) {
-        log_msg(LOG_LVL_ERROR, "FATAL error - terminating");
-        exit(1);
+    // Log and possibly exit
+    switch (level) {
+        case ERR_FATAL:
+            LOGE("%s", final_msg);
+            log_close();
+            exit(EXIT_FAILURE);
+        case ERR_ERROR:
+            LOGE("%s", final_msg);
+            break;
+        case ERR_WARNING:
+            LOGW("%s", final_msg);
+            break;
     }
 }
 ```
 
+#### get_error_message
+[\<get_error_message\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/error_handler.c?plain=1#L39-L44)
+
+Get human-readable message for an application error code:
+
+```c
+const char* get_error_message(app_error_t err_code);
+```
+
 ### Validation Functions
+[\<Validation Functions\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/error_handler.c?plain=1#L100-L135)
 
 Utility functions for input validation with automatic error reporting:
 
 #### validate_int_range
+[\<validate_int_range\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/error_handler.c?plain=1#L100-L107)
 
 ```c
-int validate_int_range(int value, int min, int max, const char *param_name);
+int validate_int_range(int value, int min, int max, const char *context);
 ```
 
 **Returns:** `0` on success, `-1` if out of range
 
 **Example:**
 ```c
-if (validate_int_range(num_units, 1, MAX_UNITS, "num_units") != 0) {
-    return ERR_INVALID_INPUT;
+if (validate_int_range(num_units, 1, MAX_UNITS, "spawn_units") != 0) {
+    return -1;  // Error already logged
 }
 ```
 
 #### validate_coordinate
+[\<validate_coordinate\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/error_handler.c?plain=1#L109-L117)
 
 ```c
-int validate_coordinate(int x, int y, int max_x, int max_y);
+int validate_coordinate(int x, int y, int max_x, int max_y, const char *context);
 ```
 
 **Returns:** `0` if valid, `-1` otherwise
 
 **Example:**
 ```c
-if (validate_coordinate(pos_x, pos_y, MAP_WIDTH, MAP_HEIGHT) != 0) {
-    LOGW("Invalid spawn coordinate: (%d,%d)", pos_x, pos_y);
-    return -1;
+if (validate_coordinate(pos_x, pos_y, MAP_WIDTH, MAP_HEIGHT, "spawn_pos") != 0) {
+    return -1;  // Error already logged
 }
 ```
 
 #### validate_string
+[\<validate_string\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/error_handler.c?plain=1#L119-L135)
 
 ```c
-int validate_string(const char *str, const char *param_name);
+int validate_string(const char *str, size_t min_len, size_t max_len, const char *context);
 ```
 
-**Returns:** `0` if non-NULL and non-empty, `-1` otherwise
+**Parameters:**
+- `str`: String to validate
+- `min_len`: Minimum length (inclusive)
+- `max_len`: Maximum length (inclusive)
+- `context`: Context string for error messages
+
+**Returns:** `0` if valid, `-1` otherwise
 
 **Example:**
 ```c
-if (validate_string(scenario_file, "scenario_file") != 0) {
-    handle_error(ERR_FATAL, ERR_INVALID_INPUT, "Missing scenario file");
+if (validate_string(scenario_file, 1, 256, "scenario_file") != 0) {
+    return -1;  // Error already logged
 }
 ```
 
@@ -403,15 +487,16 @@ if (validate_string(scenario_file, "scenario_file") != 0) {
 The logging system provides comprehensive diagnostic output with minimal performance overhead.
 
 ### Log Levels
+[\<log_level_t\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/log.h?plain=1#L18-L23)
 
 Four log levels with increasing severity:
 
 ```c
 typedef enum {
-    LOG_LVL_DEBUG = 0,  // Detailed diagnostic information
-    LOG_LVL_INFO,       // General informational messages
-    LOG_LVL_WARN,       // Warning messages (potential issues)
-    LOG_LVL_ERROR       // Error messages (failures)
+    LOG_LVL_DEBUG = 0,
+    LOG_LVL_INFO  = 1,
+    LOG_LVL_WARN  = 2,
+    LOG_LVL_ERROR = 3
 } log_level_t;
 ```
 
@@ -425,15 +510,17 @@ typedef enum {
 | ERROR   | Operation failures, exceptions           | "Failed to acquire semaphore: timeout"    |
 
 ### Log Infrastructure
+[\<Logging Backend\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/utils.c?plain=1#L1-L45)
 
 #### Global State
 
 ```c
-static FILE *g_logf = NULL;          // Per-process log file
-static int g_all_fd = -1;            // ALL.log file descriptor
+static FILE *g_logf = NULL;                    // Per-process log file
+static int g_all_fd = -1;                      // ALL.log file descriptor
 static log_level_t g_min_lvl = LOG_LVL_DEBUG;  // Minimum level to log
-static char g_role[32] = "UNKNOWN";  // Process role (CC, UI, etc.)
-static unsigned g_unit_id = 0;       // Unit ID if applicable
+static char g_role[8] = "??";                  // Process role (CC, BS, etc.)
+static uint16_t g_unit_id = 0;                 // Unit ID if applicable
+static char g_run_dir[512] = "logs";           // Run directory path
 ```
 
 #### Run Directory Management
@@ -452,73 +539,79 @@ logs/run_2026-02-04_12-46-08_pid1289/
 ### Log Initialization
 
 #### log_init
+[\<log_init\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/utils.c?plain=1#L81-L149)
 
 ```c
-int log_init(const char *role, unsigned unit_id);
+int log_init(const char *role, int16_t unit_id);
 ```
 
 **Parameters:**
-- `role`: Process role ("CC", "UI", "Flagship0", etc.)
-- `unit_id`: Unit ID (0 for non-unit processes)
+- `role`: Process role ("CC", "BS", "SQ", etc. - max 7 chars)
+- `unit_id`: Unit ID (0 for CC, positive for units)
 
 **Behavior:**
-1. Resolves run directory from environment or temp file
-2. Creates per-process log file: `<run_dir>/<role>.log`
-3. Opens combined log: `<run_dir>/ALL.log` with `O_APPEND`
-4. Sets stdio buffering to line-buffered
-5. Logs initialization message
+1. Resolves run directory from `SKIRMISH_RUN_DIR` env or `/tmp/skirmish_run_dir.txt`
+2. Ensures `logs/` and run directory exist
+3. Creates per-process log file: `<run_dir>/<role>_pid_<pid>.log` or `<run_dir>/<role>_u<id>_pid_<pid>.log`
+4. Opens combined log: `<run_dir>/ALL.log` with `O_APPEND`
+5. Sets per-process log to line-buffered
+6. Logs startup header
 
 **Implementation:**
 ```c
-int log_init(const char *role, unsigned unit_id) {
-    const char *run_dir = getenv("SKIRMISH_RUN_DIR");
-    if (!run_dir) {
-        run_dir = read_run_dir_from_file("/tmp/skirmish_run_dir.txt");
+int log_init(const char *role, int16_t unit_id) {
+    // Pick run directory from env if set
+    const char *rd = getenv("SKIRMISH_RUN_DIR");
+    if (rd && *rd) {
+        strncpy(g_run_dir, rd, sizeof(g_run_dir) - 1);
+    } else {
+        // Try to read from CC's run_dir file
+        FILE *f = fopen("/tmp/skirmish_run_dir.txt", "r");
+        if (f) {
+            fgets(g_run_dir, sizeof(g_run_dir), f);
+            fclose(f);
+        }
     }
-    if (!run_dir) {
-        fprintf(stderr, "Cannot determine run directory\n");
-        return -1;
-    }
-    
-    // Store role and unit ID
-    snprintf(g_role, sizeof(g_role), "%s", role);
+
+    ensure_dir_exists("logs");
+    ensure_dir_exists(g_run_dir);
+
     g_unit_id = unit_id;
-    
-    // Open per-process log
-    char path[512];
-    snprintf(path, sizeof(path), "%s/%s.log", run_dir, role);
+    strncpy(g_role, role ? role : "??", sizeof(g_role) - 1);
+
+    char path[600];
+    pid_t pid = getpid();
+
+    if (unit_id == 0) {
+        snprintf(path, sizeof(path), "%s/%s_pid_%d.log", 
+                 g_run_dir, g_role, (int)pid);
+    } else {
+        snprintf(path, sizeof(path), "%s/%s_u%u_pid_%d.log",
+                 g_run_dir, g_role, (unsigned)unit_id, (int)pid);
+    }
+
     g_logf = fopen(path, "a");
-    if (!g_logf) {
-        perror("fopen per-process log");
-        return -1;
-    }
     setvbuf(g_logf, NULL, _IOLBF, 0);  // Line-buffered
-    
-    // Open combined log with O_APPEND for atomic writes
-    snprintf(path, sizeof(path), "%s/ALL.log", run_dir);
-    g_all_fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
-    if (g_all_fd == -1) {
-        perror("open ALL.log");
-        fclose(g_logf);
-        g_logf = NULL;
-        return -1;
-    }
-    
-    log_msg(LOG_LVL_INFO, "Logger initialized for %s (unit %u)", 
-            role, unit_id);
+
+    open_global_log();  // Opens ALL.log with O_APPEND
+
+    log_msg(LOG_LVL_INFO, "logger started (role=%s unit=%u pid=%d)",
+            g_role, (unsigned)unit_id, (int)pid);
     return 0;
 }
 ```
 
 ### Logging API
+[\<Logging API\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/log.h?plain=1#L25-L48)
 
 #### Convenience Macros
+[\<Log Macros\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/log.h?plain=1#L44-L48)
 
 ```c
-#define LOGD(fmt, ...) log_msg(LOG_LVL_DEBUG, fmt, ##__VA_ARGS__)
-#define LOGI(fmt, ...) log_msg(LOG_LVL_INFO, fmt, ##__VA_ARGS__)
-#define LOGW(fmt, ...) log_msg(LOG_LVL_WARN, fmt, ##__VA_ARGS__)
-#define LOGE(fmt, ...) log_msg(LOG_LVL_ERROR, fmt, ##__VA_ARGS__)
+#define LOGD(...) log_msg(LOG_LVL_DEBUG, __VA_ARGS__)
+#define LOGI(...) log_msg(LOG_LVL_INFO,  __VA_ARGS__)
+#define LOGW(...) log_msg(LOG_LVL_WARN,  __VA_ARGS__)
+#define LOGE(...) log_msg(LOG_LVL_ERROR, __VA_ARGS__)
 ```
 
 **Usage:**
@@ -530,6 +623,7 @@ LOGD("State transition: %s -> %s", old_state, new_state);
 ```
 
 #### log_msg
+[\<log_msg\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/utils.c?plain=1#L177-L233)
 
 Core logging function:
 
@@ -596,6 +690,7 @@ void log_msg(log_level_t lvl, const char *fmt, ...) {
 ```
 
 #### log_close
+[\<log_close\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/utils.c?plain=1#L151-L170)
 
 ```c
 void log_close(void);
@@ -608,6 +703,7 @@ void log_close(void);
 - Idempotent (safe to call multiple times)
 
 #### log_set_level
+[\<log_set_level\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/utils.c?plain=1#L172-L175)
 
 ```c
 void log_set_level(log_level_t lvl);
@@ -623,17 +719,17 @@ log_set_level(LOG_LVL_INFO);
 
 #### Per-Process Logs
 
-Each process writes to its own log file:
+Each process writes to its own log file with PID and unit ID:
 
 ```
 logs/run_2026-02-04_12-46-08_pid1289/
-├── CC.log           # Command Center
-├── UI.log           # User Interface
-├── CM.log           # Console Manager
-├── Flagship0.log    # Unit ID 1
-├── Battleship0.log  # Unit ID 2
-├── Battleship1.log  # Unit ID 3
-└── Squadron0.log    # Unit ID 4
+├── CC_pid_1289.log           # Command Center
+├── UI_pid_1294.log           # User Interface
+├── CM_pid_1295.log           # Console Manager
+├── FS_u1_pid_1301.log        # Flagship unit 1
+├── BS_u2_pid_1302.log        # Battleship unit 2
+├── BS_u3_pid_1303.log        # Battleship unit 3
+└── SQ_u4_pid_1304.log        # Squadron unit 4
 ```
 
 **Advantages:**
@@ -647,7 +743,7 @@ All processes write to a single combined log using atomic append:
 
 ```c
 // Opened with O_APPEND flag
-g_all_fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+g_all_fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0600);
 
 // Atomic write (kernel guarantees atomicity for O_APPEND)
 write(g_all_fd, line, len);
@@ -666,6 +762,7 @@ write(g_all_fd, line, len);
 ---
 
 ## Terminal Tee System
+[\<terminal_tee.c\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/terminal_tee.c)
 
 The terminal tee system captures all stdout/stderr output and redirects it to multiple destinations simultaneously.
 
@@ -711,6 +808,7 @@ Terminal Tee Worker becomes orphan, reparented to init
 ### Output Redirection
 
 #### Pipe Creation and Redirection
+[\<start_terminal_tee\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/terminal_tee.c?plain=1#L27-L121)
 
 ```c
 pid_t start_terminal_tee(const char *run_dir) {
@@ -764,6 +862,7 @@ execv("/bin/sh", argv);
 Setting `argv[0]` to `"terminal_tee"` makes the process identifiable in `ps` output.
 
 ### Signal Handling
+[\<ignore_sig\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/terminal_tee.c?plain=1#L18-L25)
 
 The terminal tee process ignores termination signals:
 
@@ -830,103 +929,121 @@ Sets process name visible in `/proc/PID/comm` and `ps`.
 ## API Reference
 
 ### Error Handling API
+[\<error_handler.h\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/error_handler.h)
 
 #### Macros
 
 ```c
-CHECK_SYS_CALL(expr)
+CHECK_SYS_CALL(call, context)
 ```
-- **Purpose:** Wrap system calls for automatic error logging
-- **Parameters:** `expr` - system call expression
-- **Returns:** Result of `expr` (preserves return value)
-- **Side Effects:** Logs error to stderr and log file if `expr == -1`
+- **Purpose:** Wrap system calls for automatic error handling
+- **Parameters:** `call` - system call expression, `context` - context string
+- **Returns:** Result of `call` (preserves return value)
+- **Side Effects:** Calls `HANDLE_SYS_ERROR` if `call == -1` (exits program)
 
 ```c
-CHECK_SYS_CALL_NONFATAL(expr)
+CHECK_SYS_CALL_NONFATAL(call, context)
 ```
-- **Purpose:** Alias of `CHECK_SYS_CALL` for non-fatal operations
-- **Parameters:** `expr` - system call expression
-- **Returns:** Result of `expr`
+- **Purpose:** Wrap system calls for non-fatal error handling
+- **Parameters:** `call` - system call expression, `context` - context string
+- **Returns:** Result of `call`
+- **Side Effects:** Logs error but doesn't exit if `call == -1`
 
 ```c
-HANDLE_SYS_ERROR(syscall_name, app_err)
+HANDLE_SYS_ERROR(context, msg)
 ```
-- **Purpose:** Log system call error and terminate
+- **Purpose:** Log system call error with errno and terminate
 - **Parameters:** 
-  - `syscall_name` - Name of system call (const char*)
-  - `app_err` - Application error code (app_error_t)
-- **Returns:** Does not return (calls `exit(1)`)
+  - `context` - Context string (e.g., function name)
+  - `msg` - Error message
+- **Returns:** Does not return (calls `exit(EXIT_FAILURE)`)
+
+```c
+HANDLE_APP_ERROR(level, context, err_code, msg)
+```
+- **Purpose:** Handle application-specific errors
+- **Parameters:** 
+  - `level` - Error severity
+  - `context` - Context string
+  - `err_code` - Application error code
+  - `msg` - Error message
+- **Returns:** void (exits if `level == ERR_FATAL`)
 
 #### Functions
 
 ```c
-void handle_error(error_level_t level, app_error_t err_code, 
-                  const char *fmt, ...);
+void handle_error(error_level_t level, const char *context, 
+                 app_error_t err_code, int use_errno, 
+                 const char *fmt, ...);
 ```
 - **Purpose:** Central error handling with formatted message
 - **Parameters:**
   - `level` - Error severity (ERR_FATAL/ERR_ERROR/ERR_WARNING)
-  - `err_code` - Application error code
+  - `context` - Context string
+  - `err_code` - Application error code (or ERR_OK if using errno)
+  - `use_errno` - If 1, use perror() with errno; if 0, use err_code
   - `fmt` - printf-style format string
   - `...` - Format arguments
 - **Returns:** void (exits if `level == ERR_FATAL`)
 
 ```c
-int validate_int_range(int value, int min, int max, const char *param_name);
+int validate_int_range(int value, int min, int max, const char *context);
 ```
 - **Purpose:** Validate integer is within range
 - **Parameters:**
   - `value` - Integer to validate
   - `min` - Minimum allowed value (inclusive)
   - `max` - Maximum allowed value (inclusive)
-  - `param_name` - Parameter name for error messages
+  - `context` - Context for error messages
 - **Returns:** 0 on success, -1 if out of range
 
 ```c
-int validate_coordinate(int x, int y, int max_x, int max_y);
+int validate_coordinate(int x, int y, int max_x, int max_y, const char *context);
 ```
 - **Purpose:** Validate 2D coordinate is within bounds
 - **Parameters:**
   - `x`, `y` - Coordinates to validate
   - `max_x`, `max_y` - Maximum values (exclusive)
+  - `context` - Context for error messages
 - **Returns:** 0 if valid, -1 otherwise
 
 ```c
-int validate_string(const char *str, const char *param_name);
+int validate_string(const char *str, size_t min_len, size_t max_len, const char *context);
 ```
-- **Purpose:** Validate string is non-NULL and non-empty
+- **Purpose:** Validate string length is within bounds
 - **Parameters:**
   - `str` - String to validate
-  - `param_name` - Parameter name for error messages
+  - `min_len` - Minimum length (inclusive)
+  - `max_len` - Maximum length (inclusive)
+  - `context` - Context for error messages
 - **Returns:** 0 if valid, -1 otherwise
 
 ---
 
 ### Logging API
+[\<log.h\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/log.h)
 
 #### Macros
 
 ```c
-LOGD(fmt, ...)  // Log at DEBUG level
-LOGI(fmt, ...)  // Log at INFO level
-LOGW(fmt, ...)  // Log at WARN level
-LOGE(fmt, ...)  // Log at ERROR level
+LOGD(...)  // Log at DEBUG level
+LOGI(...)  // Log at INFO level
+LOGW(...)  // Log at WARN level
+LOGE(...)  // Log at ERROR level
 ```
 - **Purpose:** Convenience macros for logging at specific levels
-- **Parameters:**
-  - `fmt` - printf-style format string
-  - `...` - Format arguments
+- **Parameters:** printf-style format string and arguments
 - **Returns:** void
 
 #### Functions
 
 ```c
-int log_init(const char *role, unsigned unit_id);
+int log_init(const char *role, int16_t unit_id);
 ```
 - **Purpose:** Initialize logging system for current process
 - **Parameters:**
-  - `role` - Process role string (e.g., "CC", "Flagship0")
-  - `unit_id` - Unit ID (0 for non-unit processes)
+  - `role` - Process role string (e.g., "CC", "BS", "SQ" - max 7 chars)
+  - `unit_id` - Unit ID (0 for CC, positive for units)
 - **Returns:** 0 on success, -1 on failure
 - **Note:** Must be called before any logging functions
 
@@ -949,6 +1066,13 @@ void log_msg(log_level_t lvl, const char *fmt, ...);
 - **Returns:** void
 
 ```c
+void log_printf(const char *fmt, ...);
+```
+- **Purpose:** Write same line to stdout and logs
+- **Parameters:** printf-style format string and arguments
+- **Returns:** void
+
+```c
 void log_set_level(log_level_t lvl);
 ```
 - **Purpose:** Set minimum log level (filter out lower levels)
@@ -960,6 +1084,7 @@ void log_set_level(log_level_t lvl);
 ---
 
 ### Terminal Tee API
+[\<tee_spawn.h\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/tee_spawn.h)
 
 ```c
 int tee_spawn_and_redirect(const char *run_dir);
@@ -997,15 +1122,11 @@ pid_t start_terminal_tee(const char *run_dir);
 void init_shared_memory(const char *name) {
     int shm_fd;
     
-    // Check system call and handle error
-    if (CHECK_SYS_CALL(shm_fd = shm_open(name, O_CREAT | O_RDWR, 0600)) == -1) {
-        HANDLE_SYS_ERROR("shm_open", ERR_SHM_ERROR);
-    }
+    // Check system call - exits on failure
+    shm_fd = CHECK_SYS_CALL(shm_open(name, O_CREAT | O_RDWR, 0600), "init_shm");
     
     // Resize shared memory
-    if (CHECK_SYS_CALL(ftruncate(shm_fd, 4096)) == -1) {
-        HANDLE_SYS_ERROR("ftruncate", ERR_SHM_ERROR);
-    }
+    CHECK_SYS_CALL(ftruncate(shm_fd, 4096), "init_shm");
     
     LOGI("Shared memory %s initialized successfully", name);
 }
@@ -1017,16 +1138,15 @@ void init_shared_memory(const char *name) {
 int acquire_semaphore_with_timeout(int sem_id) {
     struct sembuf op = { .sem_num = 0, .sem_op = -1, .sem_flg = 0 };
     
-    if (CHECK_SYS_CALL(semop(sem_id, &op, 1)) == -1) {
+    int ret = CHECK_SYS_CALL_NONFATAL(semop(sem_id, &op, 1), "semop");
+    if (ret == -1) {
         if (errno == EINTR) {
             // Interrupted - recoverable
-            handle_error(ERR_WARNING, ERR_SEM_ERROR, 
-                        "Semaphore operation interrupted - retrying");
+            LOGW("Semaphore operation interrupted - retrying");
             return -1;  // Caller can retry
-        } else {
-            // Fatal error
-            HANDLE_SYS_ERROR("semop", ERR_SEM_ERROR);
         }
+        // Other errors already logged by macro
+        return -1;
     }
     
     return 0;
@@ -1037,26 +1157,22 @@ int acquire_semaphore_with_timeout(int sem_id) {
 
 ```c
 int parse_scenario_config(const char *filename, scenario_t *scenario) {
-    if (validate_string(filename, "scenario_file") != 0) {
-        handle_error(ERR_FATAL, ERR_INVALID_INPUT, 
-                    "Scenario filename is required");
+    if (validate_string(filename, 1, 256, "scenario_file") != 0) {
+        return -1;  // Error already logged
     }
     
     FILE *f = fopen(filename, "r");
     if (!f) {
-        handle_error(ERR_FATAL, ERR_FILE_ERROR, 
-                    "Cannot open scenario file: %s", filename);
+        HANDLE_SYS_ERROR("parse_scenario", "fopen failed");
     }
     
     // Parse configuration...
     int num_units;
     fscanf(f, "num_units=%d", &num_units);
     
-    if (validate_int_range(num_units, 1, MAX_UNITS, "num_units") != 0) {
-        handle_error(ERR_ERROR, ERR_VALIDATION_ERROR, 
-                    "Invalid number of units in %s", filename);
+    if (validate_int_range(num_units, 1, MAX_UNITS, "parse_scenario") != 0) {
         fclose(f);
-        return -1;
+        return -1;  // Error already logged
     }
     
     scenario->num_units = num_units;
@@ -1539,7 +1655,7 @@ strace -e write -p <PID>
 **Solution:**
 ```c
 // Ensure ALL.log is opened with O_APPEND
-g_all_fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+g_all_fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0600);
 
 // Check for errors
 if (g_all_fd == -1) {
@@ -1734,16 +1850,16 @@ setvbuf(stdout, NULL, _IOLBF, 0);  // Line-buffered
 ### Source Files
 
 **Error Handling:**
-- [include/error_handler.h](../include/error_handler.h) - Error types and macros
-- [src/error_handler.c](../src/error_handler.c) - Error handling implementation
+- [\<error_handler.h\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/error_handler.h) - Error types, codes, and macros (146 lines)
+- [\<error_handler.c\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/error_handler.c) - Error handling implementation (136 lines)
 
 **Logging:**
-- [include/log.h](../include/log.h) - Logging API
-- [src/utils.c](../src/utils.c) - Logging backend
+- [\<log.h\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/log.h) - Logging API (48 lines)
+- [\<utils.c\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/utils.c) - Logging backend (234 lines)
 
 **Terminal Tee:**
-- [include/tee_spawn.h](../include/tee_spawn.h) - Tee spawn interface
-- [src/CC/terminal_tee.c](../src/CC/terminal_tee.c) - Terminal tee implementation
+- [\<tee_spawn.h\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/tee_spawn.h) - Tee spawn interface (14 lines)
+- [\<terminal_tee.c\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/terminal_tee.c) - Terminal tee implementation (114 lines)
 
 ### External References
 
@@ -1772,7 +1888,7 @@ setvbuf(stdout, NULL, _IOLBF, 0);  // Line-buffered
 
 The **Error Handling, Logging, and Terminal Tee** subsystem provides the diagnostic and reliability foundation for Space Skirmish:
 
-- **Error Handling:** Standardized error reporting with three severity levels and 22 application-specific error codes
+- **Error Handling:** Standardized error reporting with three severity levels and 20 application-specific error codes
 - **Logging:** Dual logging strategy (per-process + combined) with four log levels and atomic append guarantees
 - **Terminal Tee:** Background process for simultaneous terminal/file/UI output with signal tolerance
 
@@ -1786,6 +1902,6 @@ These systems work seamlessly together to provide a production-ready diagnostic 
 
 ---
 
-**Document Version:** 1.0  
-**Last Updated:** 2026-02-04  
+**Document Version:** 1.1  
+**Last Updated:** 2026-02-06  
 **Author:** Space Skirmish Development Team

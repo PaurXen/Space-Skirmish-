@@ -67,7 +67,7 @@ static void exit_handler(void) {
  * Returns 0 if no other instance, -1 if another CC is running. */
 static int check_single_instance(void) {
     const char *pidfile = "/tmp/skirmish_cc.pid";
-    int fd = CHECK_SYS_CALL_NONFATAL(open(pidfile, O_RDWR | O_CREAT, 0644), "check_single_instance:open");
+    int fd = CHECK_SYS_CALL_NONFATAL(open(pidfile, O_RDWR | O_CREAT, 0600), "check_single_instance:open");
     if (fd == -1) {
         return -1;
     }

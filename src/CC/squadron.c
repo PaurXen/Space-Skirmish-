@@ -255,13 +255,23 @@ static void squadrone_action(ipc_ctx_t *ctx,
 
     // Only request commander if we don't have one or it's dead
     if (!commander || !ctx->S->units[commander].alive) {
+        // Reset commander first if dead
+        if (commander && !ctx->S->units[commander].alive) {
+            LOGD("[SQ %u] commander %u is dead, resetting", unit_id, commander);
+            commander = 0;
+            order = PATROL;
+        }
+        
         // find ally flagship/carrier and send commander request
         unit_id_t detect_ally_id[MAX_UNITS];
         (void)memset(detect_ally_id, 0, sizeof(detect_ally_id));
+        faction_t my_faction = ctx->S->units[unit_id].faction;
+        // Use FACTION_NONE to detect ALL units, then filter for same-faction capital ships
         int ally_count = unit_radar(unit_id, *st, ctx->S->units, detect_ally_id, FACTION_NONE);
         for (int i=0; i<ally_count; i++){
             unit_entity_t u = ctx->S->units[detect_ally_id[i]];
-            if (TYPE_FLAGSHIP <= u.type && u.type <= TYPE_CARRIER) {
+            // Only request commander from same faction flagships/carriers
+            if (u.faction == my_faction && TYPE_FLAGSHIP <= u.type && u.type <= TYPE_CARRIER) {
                 // send commander request
                 mq_commander_req_t req = {
                     .mtype = MSG_COMMANDER_REQ,
@@ -274,11 +284,6 @@ static void squadrone_action(ipc_ctx_t *ctx,
                 break;  // only send one request per tick
             }
         }
-    }
-    if (commander && !ctx->S->units[commander].alive) {
-        commander = 0; // reset commander if dead
-        order = PATROL; // default to PATROL
-        LOGD("[SQ %u] commander %u is dead, resetting", unit_id, commander);
     }
     
     //DEBUG: Print detected units

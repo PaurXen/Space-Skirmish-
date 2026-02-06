@@ -6,7 +6,7 @@
 #include <unistd.h>
 
 static inline int mq_open_or_create(key_t key) {
-    int qid = msgget(key, 0666 | IPC_CREAT);
+    int qid = msgget(key, 0600 | IPC_CREAT);
     if (qid == -1) {
         perror("[IPC] msgget");
         fprintf(stderr, "[IPC] Failed to open/create message queue (key=0x%x): %s (errno=%d)\n",

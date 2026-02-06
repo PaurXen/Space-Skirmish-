@@ -222,7 +222,7 @@ int main(int argc, char **argv) {
         /* Refresh all windows */
         ui_refresh_all(&g_ui_ctx);
 
-        //usleep(50000);  // 50ms refresh rate
+        usleep(50000);  // 50ms refresh rate
     }
     
     LOGI("[UI] Main loop exited, waiting for threads...");

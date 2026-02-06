@@ -79,13 +79,13 @@ The CC implements a **tick-based barrier synchronization** pattern:
 **Location**: `src/CC/command_center.c`
 
 **Key Functions**:
-- `main()`: Entry point, initialization, tick loop
-- `check_single_instance()`: PID file locking to prevent multiple instances
-- `spawn_unit()`: Fork and execute unit processes (battleship/squadron)
-- `cm_thread()`: Console Manager command processing thread
-- `handle_cm_command()`: Process commands (SPAWN, KILL, FREEZE, SPEED, GRID)
-- `tick_barrier()`: Synchronize all units on each simulation tick
-- `cleanup_cc()`: Shutdown: signal units, reap processes, cleanup IPC
+- `main()`: Entry point, initialization, tick loop [\<link\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/command_center.c?plain=1#L503)
+- `check_single_instance()`: PID file locking to prevent multiple instances [\<link\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/command_center.c?plain=1#L68)
+- `spawn_unit()`: Fork and execute unit processes (battleship/squadron) [\<link\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/command_center.c?plain=1#L194)
+- `cm_thread()`: Console Manager command processing thread [\<link\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/command_center.c?plain=1#L474)
+- `handle_cm_command()`: Process commands (SPAWN, KILL, FREEZE, SPEED, GRID) [\<link\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/command_center.c?plain=1#L362)
+- `tick_barrier()`: Synchronize all units on each simulation tick [\<link\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/command_center.c?plain=1#L800-L821)
+- `cleanup_cc()`: Shutdown: signal units, reap processes, cleanup IPC [\<link\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/command_center.c?plain=1#L863-L955)
 
 **Responsibilities**:
 - Create IPC resources (shared memory, semaphores, message queues)
@@ -105,9 +105,13 @@ The CC implements a **tick-based barrier synchronization** pattern:
 
 **Key Features**:
 - **Commander System**: Can accept squadrons as underlings
+[\<SQ accept\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/battleship.c?plain=1#L126-L158)
 - **Autonomous Combat**: Patrol, attack, and combat logic
+[\<Combat logic\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/battleship.c?plain=1#L117-L224)
 - **Damage Processing**: Receive and process damage via message queues
+[\<Demage processing\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/battleship.c?plain=1#L409-L414)
 - **Order Execution**: Support for PATROL, ATTACK, GUARD orders
+[\<Order processing\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/battleship.c?plain=1#L180-L196)
 
 **Main Loop**:
 ```c
@@ -136,11 +140,19 @@ while (!g_stop) {
     sem_post(SEM_TICK_DONE);            // Signal tick complete
 }
 ```
+[\<Link to battleship game loop\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/battleship.c?plain=1#L382-L518)
 
 **Commander System**:
-- Accepts commander requests via message queue
-- Maintains array of underling squadron IDs
-- Issues orders to underlings (PATROL, ATTACK, GUARD at specific coordinates)
+- Accepts commander requests via message queue from squadrons
+- Maintains `underlings[]` array of squadron unit IDs
+- Issues orders to underlings based on current target:\
+  - No target → squadrons GUARD the battleship
+  - Target is FIGHTER/ELITE → fighters/elites ATTACK, bombers GUARD
+  - Target is BS/FS/CARRIER → bombers ATTACK, others GUARD bombers
+- Spawns squadrons from fighter bay when capacity allows\
+[\<commander request handling\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/battleship.c?plain=1#L126-L158)\
+[\<order sending logic\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/battleship.c?plain=1#L226-L286)\
+[\<main game loop\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/battleship.c?plain=1#L382-L518)
 
 ---
 
@@ -153,29 +165,39 @@ while (!g_stop) {
 **Key Features**:
 - **Commander Assignment**: Seeks and follows battleship commanders
 - **Autonomous Behavior**: Independent patrol/combat when no commander
-- **Order Following**: Execute PATROL, ATTACK, GUARD orders from commander
-- **Damage Processing**: Same damage system as battleships
+- **Order Following**: Execute
+[\<patrol_action\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/squadron.c?plain=1#L58-L95),
+[\<attack_action\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/squadron.c?plain=1#L97-L115),
+[\<guard_action\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/squadron.c?plain=1#L117-L205) orders from commander
+- **Damage Processing**: Same damage system as battleships\
+[\<damage processing\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/squadron.c?plain=1#L459-L464)
 
 **Commander Assignment Logic**:
 ```c
-// 1. Check if we have a living commander
-if (commander != 0 && !is_alive(ctx, commander)) {
-    commander = 0;  // Commander died, become autonomous
-}
-
-// 2. If no commander, try to find one
-if (commander == 0) {
-    commander_id = try_find_commander(ctx, unit_id);
-    if (commander_id) {
-        commander = commander_id;
+// 1. Check for commander assignment replies
+while (mq_try_recv_commander_reply(ctx->q_rep, &cmd_rep) == 1) {
+    if (cmd_rep.status == 0) {
+        commander = cmd_rep.commander_id;
     }
 }
 
-// 3. If we have commander, check for orders
-if (commander != 0) {
-    check_for_orders_from_commander(ctx, unit_id, &order, &target_pri);
+// 2. Check for orders from commander
+while (mq_try_recv_order(ctx->q_req, &order_msg) == 1) {
+    order = order_msg.order;
+    if (order == ATTACK) target_sec = order_msg.target_id;
+    else if (order == GUARD) target_ter = order_msg.target_id;
+}
+
+// 3. If no commander or commander died, find new one
+if (!commander || !ctx->S->units[commander].alive) {
+    // Scan for nearby battleships and send commander request
+    mq_commander_req_t req = { .mtype = MSG_COMMANDER_REQ, ... };
+    mq_send_commander_req(ctx->q_req, &req);
 }
 ```
+[\<squadrone_action (main logic)\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/squadron.c?plain=1#L208-L346)\
+[\<commander request sending\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/squadron.c?plain=1#L256-L277)\
+[\<main game loop\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/squadron.c?plain=1#L432-L520)
 
 ---
 
@@ -189,13 +211,16 @@ if (commander != 0) {
 
 #### Damage Calculation
 ```c
-float damage_multiplyer(unit_type_t attacker, unit_type_t target);
+float damage_multiplier(unit_type_t attacker, unit_type_t target);
 float accuracy_multiplier(weapon_type_t weapon, unit_type_t target);
 st_points_t damage_to_target(unit_entity_t *attacker, 
                               unit_entity_t *target, 
                               weapon_stats_t *weapon, 
                               float accuracy);
 ```
+[\<damage_multiplier\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_logic.c?plain=1#L16-L39)\
+[\<accuracy_multiplier\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_logic.c?plain=1#L41-L55)\
+[\<damage_to_target\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_logic.c?plain=1#L57-L67)
 
 **Type Effectiveness Matrix**:
 | Attacker | Strong Against | Multiplier |
@@ -213,24 +238,37 @@ st_points_t damage_to_target(unit_entity_t *attacker,
 
 #### Radar & Detection
 ```c
-int unit_radar_scan(ipc_ctx_t *ctx, unit_id_t unit_id, 
-                    unit_stats_t *st, unit_id_t *detect_id);
+int unit_radar(unit_id_t unit_id, unit_stats_t u_st,
+               unit_entity_t *units, unit_id_t *out,
+               faction_t faction);
 ```
-- Scans grid within detection range
-- Returns array of enemy unit IDs
-- Used for target acquisition
+- Scans all units within detection range (`u_st.dr`)
+- Filters by faction (ignores allies if faction != FACTION_NONE)
+- Returns count of detected enemy unit IDs
+- Avoids duplicates from multi-cell units\
+[\<unit_radar\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_logic.c?plain=1#L706-L735)
 
 #### Movement System
 ```c
-int unit_smart_move(ipc_ctx_t *ctx, unit_id_t unit_id, 
-                    point_t target, unit_stats_t *st);
+void unit_move(ipc_ctx_t *ctx, unit_id_t unit_id, point_t from,
+               point_t *target_pri, unit_stats_t *st, int aproach);
 ```
-- **A\* pathfinding** for obstacle avoidance
-- Respects unit speed stat
-- Handles multi-cell unit sizes
-- Collision detection
+- **BFS pathfinding** within SP (speed) disk for obstacle avoidance
+- Respects unit speed and detection range stats
+- Handles multi-cell unit sizes via `can_fit_at_position()`
+- Collision detection with grid occupancy check
+
+**Movement Pipeline**:
+1. `unit_compute_goal_for_tick_dr()` - Choose goal within detection range closest to target
+2. `unit_next_step_towards_dr()` - Find best reachable position within speed disk
+3. `unit_change_position()` - Update grid and unit position
+
+[\<unit_move\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_ipc.c?plain=1#L229-L245)\
+[\<unit_compute_goal_for_tick_dr\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_logic.c?plain=1#L565-L620)\
+[\<unit_next_step_towards_dr\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_logic.c?plain=1#L649-L701)
 
 #### Target Selection
+
 ```c
 unit_id_t unit_chose_secondary_target(ipc_ctx_t *ctx, 
                                        unit_id_t *detect_id, 
@@ -240,18 +278,48 @@ unit_id_t unit_chose_secondary_target(ipc_ctx_t *ctx,
                                        int8_t *have_pri_target, 
                                        int8_t *have_sec_target);
 ```
-- Prioritizes closest enemy
-- Considers weapon range
-- Filters by faction
+Prioritizes enemy with highest damage multiplier. When secondary target is chosen, primary target is set to secondary target's closest cell.\
+[\<unit_chose_secondary_target\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_ipc.c?plain=1#L169-L203)\
+[\<unit_chose_patrol_point\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_ipc.c?plain=1#L205-L227)\
+[\<unit_calculate_aproach\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_logic.c?plain=1#L737-L746)
+
+### Unit Logic
+
+Each unit has three target variables:
+- primary target - point which the unit approaches and move tworwards
+- secondary target - id of the enemy unit which is to be attacked
+- tertiary target (TBA to BS) - id fo the unit that is to be protected
+These three targets are being assigned based on the order that is being executed. But theres an order in which each operation is executed:
+1. Detect units
+2. Compute commander and order (TBA to BS)
+3. Action based on order (SQ - PATROL, GUARD, ATTACK | BS - PATROL)
+4. Unit move
+5. Detect units
+6. Shoot (logic)
+
+PATROL order is the default one, so it provides autonomy to the unit. The rest of them come with an already assigned target.
 
 #### Patrol Logic
-```c
-int8_t unit_chose_patrol_point(ipc_ctx_t *ctx, unit_id_t unit_id, 
-                                point_t *target, unit_stats_t st);
-```
-- Generates random patrol destinations
-- Respects grid boundaries
-- Avoids obstacles
+
+Each unit has its own patrol logic:\
+[\<battleship patrol_action\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/battleship.c?plain=1#L78-L115)\
+[\<squadron patrol_action\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/squadron.c?plain=1#L58-L95)\
+Mainly, it comes out to this:
+- Try to choose secondary and primary targets via `unit_chose_secondary_target()`
+- If it has a primary target within approach range, clear it
+- If it doesn't have a primary target, choose a random point on the DR border via `unit_chose_patrol_point()`
+
+#### Attack Logic
+
+Sets the unit's primary and secondary targets to the given target.\
+[\<squadron attack_action\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/squadron.c?plain=1#L97-L115)
+
+#### Guard Logic
+
+Sets unit's tertiary target to the ID of the guarded unit.
+Primary target is set to a position on a circle around guarded unit (radius = guarded unit's speed + size - 1).
+Uses guarded unit's DR for enemy detection. If an enemy enters that DR, it is attacked. If the target leaves the guarded unit's DR, the protecting unit returns to its orbit position.\
+[\<squadron guard_action\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/squadron.c?plain=1#L117-L205)
 
 ---
 
@@ -270,7 +338,9 @@ void unit_change_position(ipc_ctx_t *ctx, unit_id_t unit_id, point_t new_pos);
 ```
 - Thread-safe grid access
 - Multi-cell unit placement/removal
-- Position updates in shared memory
+- Position updates in shared memory\
+[\<check if occupied\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_ipc.c?plain=1#L8-L16)\
+[\<unit change position\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_ipc.c?plain=1#L18-L34)
 
 #### Damage System
 ```c
@@ -282,25 +352,35 @@ void compute_dmg_payload(ipc_ctx_t *ctx, unit_id_t unit_id,
 - **Asynchronous damage**: Attacker sends damage message to target's message queue
 - **Signal notification**: `SIGRTMAX` signals target that damage is pending
 - **Batch processing**: Target processes all pending damage in one tick
-- Handles shields and HP reduction
+- Handles shields and HP reduction\
+[\<add to dmg payload\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_ipc.c?plain=1#L47-L65)\
+[\<compute dmg payload\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_ipc.c?plain=1#L67-L96)
 
 #### Combat
 ```c
-void unit_try_combat(ipc_ctx_t *ctx, unit_id_t unit_id, 
-                     unit_stats_t *st, unit_id_t *detect_id, int count);
+st_points_t unit_weapon_shoot(ipc_ctx_t *ctx,
+                                        unit_id_t unit_id,
+                                        unit_stats_t *st,
+                                        unit_id_t target_sec,
+                                        int count,
+                                        unit_id_t *detect_id,
+                                        st_points_t *out_dmg
+)
 ```
 - Iterates through all weapons
-- Checks range to each detected enemy
-- Calculates damage and sends to targets
-- Logs combat events
+- Checks the range to each detected enemy
+- Calculates damage and sends it to targets
+- Logs combat events\
+[\<weapon shoot\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_ipc.c?plain=1#L98-L167)
 
 #### State Marking
 ```c
 void mark_dead(ipc_ctx_t *ctx, unit_id_t unit_id);
 ```
-- Sets HP to 0
-- Marks grid cells as empty
-- Allows process cleanup
+- Sets `alive` flag to 0
+- Removes unit from all grid cells it occupies (multi-cell aware)
+- Uses `remove_unit_from_grid()` for proper cleanup\
+[\<mark_dead\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_ipc.c?plain=1#L247-L263)
 
 ---
 
@@ -352,14 +432,17 @@ int scenario_load(const char *filename, scenario_t *out);
 void scenario_default(scenario_t *out);
 void scenario_generate_placements(scenario_t *scenario);
 ```
+[\<scenario load\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/scenario.c?plain=1#L38-L143)\
+[\<scenario default\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/scenario.c?plain=1#L10-L36)\
+[\<scenario generate placements\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/scenario.c?plain=1#L145-L239)
 
 ---
 
-### 7. unit_stats.c & unit_size.c
+### 7. unit_stats.c
 
 **Unit statistics database** - Defines characteristics of each unit type.
 
-**Location**: `src/CC/unit_stats.c`, `src/CC/unit_size.c`
+**Location**: `src/CC/unit_stats.c`
 
 **Stats Structure**:
 ```c
@@ -374,17 +457,86 @@ typedef struct {
 } unit_stats_t;
 ```
 
-**Example Stats** (Flagship):
-- HP: 1000
-- Shields: 500
-- Speed: 1
-- Size: 3×3 cells
-- Detection Range: 30
-- Weapons: 2× Long-Range Cannons
+**Actual Stats from Code**:
+
+| Unit | HP | SH | EN | SP | SI | DR | Weapons |
+|------|-----|-----|-----|-----|-----|-----|----------|
+| Flagship | 200 | 100 | -1 | 2 | 3 | M(120) | 2×LR_CANNON, 2×MR_GUN |
+| Destroyer | 100 | 100 | -1 | 3 | 2 | 20 | 2×LR_CANNON, 1×MR_GUN |
+| Carrier | 100 | 100 | -1 | 6 | 2 | 20 | 1×LR_CANNON, 2×MR_GUN |
+| Fighter | 20 | 0 | 20 | 5 | 1 | 10 | 1×SR_GUN |
+| Bomber | 30 | 0 | 20 | 4 | 1 | 15 | 1×SR_CANNON |
+| Elite | 20 | 20 | 20 | 6 | 1 | 15 | 1×SR_GUN |
+
+[\<unit_stats_for_type\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_stats.c?plain=1#L17-L26)\
+[\<k_fighter_types (fighter bay)\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_stats.c?plain=1#L5-L15)
 
 ---
 
-### 8. weapon_stats.c
+### 8. unit_size.c
+
+**Multi-cell unit placement system** - Handles grid occupancy for units of different sizes.
+
+**Location**: `src/CC/unit_size.c`
+
+**Key Concept**: Units occupy multiple grid cells based on their size stat. Each size uses a **diamond-shaped pattern** centered on the unit's position:
+
+**Size Patterns**:
+```
+Size 1 (1 cell):     Size 2 (5 cells):       Size 3 (13 cells):
+                           ·                        ·
+      ■                  · ■ ·                    · ■ ·
+                           ·                    · ■ ■ ■ ·
+                                                  · ■ ·
+                                                    ·
+```
+
+**Pattern Structure**:
+```c
+typedef struct {
+    int8_t count;                   // number of cells occupied
+    point_t cells[MAX_SIZE_CELLS];  // relative offsets from center
+} size_pattern_t;
+```
+
+**Key Functions**:
+
+| Function | Purpose |
+|----------|---------|
+| `get_size_pattern(size)` | Returns hardcoded cell pattern for size (1, 2, or 3) |
+| `can_fit_at_position(ctx, center, size, ignore_unit)` | Check if all cells are empty (for spawning/movement) |
+| `get_occupied_cells(center, size, out_cells, out_count)` | Get list of all grid positions a unit occupies |
+| `get_closest_cell_to_attacker(attacker_pos, target_center, target_size)` | Find nearest cell of multi-cell target for range calculation |
+| `place_unit_on_grid(ctx, unit_id, center, size)` | Mark all cells as occupied by unit_id |
+| `remove_unit_from_grid(ctx, unit_id, center, size)` | Clear all cells occupied by unit |
+
+**Usage in Combat**:
+```c
+// Calculate range to closest cell of target (not center)
+point_t closest = get_closest_cell_to_attacker(attacker_pos, target_center, target_size);
+int32_t dx = closest.x - attacker_pos.x;
+int32_t dy = closest.y - attacker_pos.y;
+int32_t range = sqrt(dx*dx + dy*dy);
+```
+
+**Usage in Movement**:
+```c
+// Check if unit can move to new position
+if (can_fit_at_position(ctx, new_pos, unit_size, unit_id)) {
+    remove_unit_from_grid(ctx, unit_id, old_pos, unit_size);
+    place_unit_on_grid(ctx, unit_id, new_pos, unit_size);
+}
+```
+
+[\<get_size_pattern\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_size.c?plain=1#L35-L42)\
+[\<can_fit_at_position\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_size.c?plain=1#L44-L64)\
+[\<place_unit_on_grid\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_size.c?plain=1#L107-L119)\
+[\<remove_unit_from_grid\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_size.c?plain=1#L121-L136)
+
+
+---
+
+### 9. weapon_stats.c
 
 **Weapon statistics database** - Defines weapon characteristics.
 
@@ -400,13 +552,20 @@ typedef struct {
 } weapon_stats_t;
 ```
 
-**Weapon Types**:
-- **Long-Range Cannon**: 100 dmg, range 30
-- **Medium-Range Cannon**: 150 dmg, range 20
-- **Short-Range Cannon**: 200 dmg, range 10
-- **Long-Range Gun**: 50 dmg, range 25
-- **Medium-Range Gun**: 75 dmg, range 15
-- **Short-Range Gun**: 100 dmg, range 5
+**Actual Weapon Stats from Code**:
+
+| Weapon | Damage | Range |
+|--------|--------|-------|
+| LR_CANNON | 10 | 15 |
+| MR_CANNON | 10 | 10 |
+| SR_CANNON | 10 | 5 |
+| LR_GUN | 10 | 15 |
+| MR_GUN | 10 | 10 |
+| SR_GUN | 10 | 5 |
+
+[\<weapon_stats_for_weapon_type\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/weapon_stats.c?plain=1#L7-L17)\
+[\<weapon_loadout_for_unit_type\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/weapon_stats.c?plain=1#L61-L74)\
+[\<k_loadout_types (per unit)\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/weapon_stats.c?plain=1#L21-L42)
 
 ---
 
@@ -417,28 +576,27 @@ typedef struct {
 **File**: `src/CC/command_center.c`
 
 ```c
-void tick_barrier(ipc_ctx_t *ctx) {
-    int alive_count = 0;
-    
-    // Count alive units
-    for (int i = 1; i <= MAX_UNITS; i++) {
-        if (ctx->S->units[i].pid > 0 && 
-            ctx->S->units[i].hp > 0) {
-            alive_count++;
+for (unsigned i=0; i<alive; i++) {
+    if (sem_post_retry(ctx.sem_id, SEM_TICK_START, +1) == -1) {
+        LOGE("[CC] sem_post_retry(TICK_START) failed: %s", strerror(errno));
+        perror("sem_post_retry(TICK_START)");
+        g_stop = 1;
+        break;
+    }
+}
+
+for (unsigned i=0; i<alive; i++) {
+    if (sem_wait_intr(ctx.sem_id, SEM_TICK_DONE, -1, &g_stop) == -1) {
+        if (g_stop) {
+            LOGW("[CC] sem_wait_intr interrupted by stop signal");
+        } else {
+            LOGE("[CC] sem_wait_intr failed: %s", strerror(errno));
         }
-    }
-    
-    // Signal each unit to start
-    for (int i = 0; i < alive_count; i++) {
-        sem_post(ctx->sem_id, SEM_TICK_START);
-    }
-    
-    // Wait for all units to complete
-    for (int i = 0; i < alive_count; i++) {
-        sem_wait(ctx->sem_id, SEM_TICK_DONE);
+        break;
     }
 }
 ```
+[\<tick barrier\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/command_center.c?plain=1#L800-L821)
 
 ### Unit Spawn Process
 
@@ -472,34 +630,55 @@ pid_t spawn_unit(unit_type_t type, faction_t faction,
     return pid;  // Parent returns child PID
 }
 ```
+[\<unit spawn\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/command_center.c?plain=1#L190-L231)
 
 ### Shutdown Sequence
 
 **File**: `src/CC/command_center.c`
 
 ```c
-void cleanup_cc(ipc_ctx_t *ctx, pid_t *unit_pids, int unit_count) {
-    // 1. Signal all units to stop
-    for (int i = 0; i < unit_count; i++) {
-        if (unit_pids[i] > 0) {
-            kill(unit_pids[i], SIGTERM);
+int status;
+pid_t pid;
+int waited = 0;
+int timeout_count = 0;
+const int MAX_WAIT_ATTEMPTS = 100; /* Prevent infinite loop */
+
+for (;;) {
+    pid = waitpid(-1, &status, 0);   // BLOCK until a child exits
+    if (pid > 0) {
+        waited++;
+        if (WIFEXITED(status)) {
+            LOGD("[CC] reaped child %d, exit status %d", pid, WEXITSTATUS(status));
+            printf("[CC] reaped child %d, exit status %d\n", pid, WEXITSTATUS(status));
+        } else if (WIFSIGNALED(status)) {
+            LOGD("[CC] reaped child %d, killed by signal %d", pid, WTERMSIG(status));
+            printf("[CC] reaped child %d, killed by signal %d\n", pid, WTERMSIG(status));
+        } else {
+            printf("[CC] reaped child %d\n", pid);
         }
-    }
-    
-    // 2. Wait for processes to terminate (with timeout)
-    for (int i = 0; i < unit_count; i++) {
-        if (unit_pids[i] > 0) {
-            waitpid(unit_pids[i], NULL, 0);
+        continue;
+}
+
+    if (pid == -1) {
+        if (errno == EINTR) {
+            timeout_count++;
+            if (timeout_count > MAX_WAIT_ATTEMPTS) {
+                LOGW("[CC] waitpid interrupted too many times, giving up");
+                break;
+            }
+            continue;               // interrupted by signal -> retry
         }
+        if (errno == ECHILD) {
+            LOGD("[CC] no more children to reap");
+            break;                  // no more children
+        }
+        LOGE("[CC] waitpid failed: %s", strerror(errno));
+        perror("[CC] waitpid");
+        break;
     }
-    
-    // 3. Cleanup IPC resources
-    ipc_cleanup(ctx);
-    
-    // 4. Close log directory
-    log_close();
 }
 ```
+[\<cleanup\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/command_center.c?plain=1#L895-L934)
 
 ---
 
@@ -508,40 +687,35 @@ void cleanup_cc(ipc_ctx_t *ctx, pid_t *unit_pids, int unit_count) {
 ### Combat System
 
 **Weapon Firing Decision**:
-1. **Detect enemies** within detection range via radar scan
+1. **Detect enemies** within detection range via `unit_radar()`
 2. **For each weapon**:
-   - Check if enemy is in weapon range
-   - Calculate accuracy modifier
-   - Roll to hit
-   - Calculate damage with type multipliers
-   - Send damage message to target
-3. **Target processes damage** on next tick
+   - Check if enemy is in weapon range via `in_disk_i()`
+   - Calculate accuracy modifier via `accuracy_multiplier()`
+   - Roll to hit (random vs accuracy)
+   - Calculate damage with type multipliers via `damage_multiplier()`
+   - Send damage message to target via `unit_add_to_dmg_payload()`
+3. **Target processes damage** on next tick via `compute_dmg_payload()`
 
-**Damage Processing**:
-```c
-// 1. Reduce shields first
-if (st->sh >= total_damage) {
-    st->sh -= total_damage;
-    total_damage = 0;
-} else {
-    total_damage -= st->sh;
-    st->sh = 0;
-}
+**Key Functions**:\
+[\<damage_multiplier\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_logic.c?plain=1#L16-L39)\
+[\<accuracy_multiplier\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_logic.c?plain=1#L41-L55)\
+[\<damage_to_target\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_logic.c?plain=1#L57-L67)\
+[\<unit_weapon_shoot\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_ipc.c?plain=1#L98-L167)
 
-// 2. Apply remaining damage to HP
-st->hp -= total_damage;
-if (st->hp <= 0) {
-    mark_dead(ctx, unit_id);
-}
-```
 
 ### Movement & Pathfinding
 
-**A\* Pathfinding** (unit_logic.c):
+**BFS Pathfinding** (unit_logic.c):
 - **Cost function**: Euclidean distance to goal
-- **Obstacle avoidance**: Check grid for occupied cells
-- **Multi-cell units**: Validate all cells in unit's footprint
-- **Speed limiting**: Move at most `speed` cells per tick
+- **Obstacle avoidance**: Check grid for occupied cells via `can_fit_at_position()`
+- **Multi-cell units**: Validate all cells in unit's footprint before movement
+- **Speed limiting**: Move at most `sp` (speed) cells per tick
+- **Detection range planning**: Goal chosen within DR, then step chosen within SP
+
+**Key Functions**:\
+[\<bfs_best_reachable_in_sp_disk_prefer_border\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_logic.c?plain=1#L450-L562)\
+[\<unit_compute_goal_for_tick_dr\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_logic.c?plain=1#L565-L620)\
+[\<unit_next_step_towards_dr\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/CC/unit_logic.c?plain=1#L649-L701)
 
 ### Order System
 
@@ -557,8 +731,8 @@ if (st->hp <= 0) {
    - Pursue target until destroyed
 
 3. **GUARD**:
-   - Hold position at specified coordinates
-   - Engage enemies within range
+   - Hold position near specified unit
+   - Engage enemies within guarded unit range
    - Do not pursue
 
 **Commander → Squadron Communication**:
@@ -587,45 +761,49 @@ typedef struct {
     st_points_t damage;   // Damage amount
 } mq_damage_t;
 ```
+[\<mq_damage_t definition\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/ipc_mesq.h?plain=1#L55-L57)
 
 **Commander Request** (`q_req`):
 ```c
 typedef struct {
-    long mtype;           // Battleship PID
+    long mtype;           // MSG_COMMANDER_REQ
     pid_t sender;         // Squadron PID
     unit_id_t sender_id;  // Squadron unit ID
     uint32_t req_id;      // Request identifier
 } mq_commander_req_t;
 ```
+[\<mq_commander_req_t definition\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/ipc_mesq.h?plain=1#L41-L46)
 
 **Commander Reply** (`q_rep`):
 ```c
 typedef struct {
-    long mtype;           // Squadron PID
+    long mtype;           // Squadron PID (for filtering)
     uint32_t req_id;      // Matching request ID
-    int status;           // 0 = accepted, -1 = rejected
-    unit_id_t commander_id; // Battleship unit ID
+    int16_t status;       // 0 = accepted, <0 = rejected
+    unit_id_t commander_id; // Battleship unit ID on success
 } mq_commander_rep_t;
 ```
+[\<mq_commander_rep_t definition\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/ipc_mesq.h?plain=1#L48-L53)
 
-**Order Messages** (`q_order`):
+**Order Messages** (`q_req`):
 ```c
 typedef struct {
-    long mtype;           // Squadron PID
+    long mtype;           // Target squadron PID
     unit_order_t order;   // PATROL, ATTACK, GUARD
-    int16_t target_x;     // Target X coordinate
-    int16_t target_y;     // Target Y coordinate
+    unit_id_t target_id;  // Target unit ID for ATTACK/GUARD
 } mq_order_t;
 ```
+[\<mq_order_t definition\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/ipc_mesq.h?plain=1#L61-L65)
 
 ### Semaphore Usage
 
-| Semaphore | Purpose |
-|-----------|---------|
-| `SEM_GLOBAL_LOCK` | Protect shared memory writes |
-| `SEM_TICK_START` | Signal units to begin tick |
-| `SEM_TICK_DONE` | Signal tick completion to CC |
-| `SEM_UI_LOCK` | Protect UI updates |
+| Index | Semaphore | Purpose |
+|-------|-----------|----------------------------------|
+| 0 | `SEM_GLOBAL_LOCK` | Protect shared memory writes (currently commented out in code) |
+| 1 | `SEM_TICK_START` | CC posts N permits; each unit waits for one to begin tick |
+| 2 | `SEM_TICK_DONE` | Each unit posts when done; CC waits N times to synchronize |
+
+[\<SEM_* enum definition\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/shared.h?plain=1#L111-L121)
 
 ### Shared Memory Layout
 
@@ -633,12 +811,18 @@ typedef struct {
 
 ```c
 typedef struct {
-    unit_id_t grid[M][N];        // Grid state
-    unit_entity_t units[MAX_UNITS]; // Unit states
-    int tick_count;              // Global tick counter
-    // ... other global state
-} shared_state_t;
+    uint32_t magic;                       // SHM_MAGIC for sanity check
+    uint32_t ticks;                       // Global tick counter
+    uint16_t next_unit_id;                // Unit ID allocator
+    uint16_t unit_count;                  // Active unit count
+    uint16_t tick_expected;               // Units expected this tick
+    uint16_t tick_done;                   // Units finished this tick
+    uint32_t last_step_tick[MAX_UNITS+1]; // Per-unit last tick performed
+    unit_id_t grid[M][N];                 // Grid state (120×40)
+    unit_entity_t units[MAX_UNITS+1];     // Unit states (indexed by unit_id)
+} shm_state_t;
 ```
+[\<shm_state_t definition\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/shared.h?plain=1#L90-L106)
 
 ---
 
@@ -648,32 +832,38 @@ typedef struct {
 
 ```c
 typedef struct {
-    pid_t pid;              // Process ID
-    unit_type_t type;       // FLAGSHIP, DESTROYER, etc.
-    faction_t faction;      // REPUBLIC or CIS
+    pid_t pid;              // Process ID for signaling
+    uint8_t faction;        // faction_t (FACTION_REPUBLIC, FACTION_CIS)
+    uint8_t type;           // unit_type_t (FLAGSHIP, DESTROYER, etc.)
+    uint8_t alive;          // 1 = alive, 0 = dead
     point_t position;       // Grid coordinates (center)
-    st_points_t hp;         // Current hit points
-    st_points_t sh;         // Current shields
-    st_points_t en;         // Current energy
-    // ... other runtime stats
+    uint32_t flags;         // Reserved for status/orders
+    st_points_t dmg_payload;// Damage received this tick
 } unit_entity_t;
 ```
+[\<unit_entity_t definition\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/shared.h?plain=1#L36-L45)
 
 ### scenario_t
 
 ```c
 typedef struct {
-    char name[MAX_SCENARIO_NAME];
-    int map_width;
-    int map_height;
-    obstacle_t obstacles[MAX_OBSTACLES];
-    int obstacle_count;
-    unit_placement_t units[MAX_INITIAL_UNITS];
-    int unit_count;
-    placement_mode_t placement_mode;
-    // ... auto-generation counts
+    char name[MAX_SCENARIO_NAME];      // Scenario display name
+    int map_width;                     // Map width (default M=120)
+    int map_height;                    // Map height (default N=40)
+    obstacle_t obstacles[MAX_OBSTACLES]; // Obstacle positions
+    int obstacle_count;                // Number of obstacles
+    unit_placement_t units[MAX_INITIAL_UNITS]; // Pre-defined unit placements
+    int unit_count;                    // Number of pre-defined units
+    placement_mode_t placement_mode;   // Auto-generation placement mode
+    int republic_carriers;             // Auto-gen: Republic carriers
+    int republic_destroyers;           // Auto-gen: Republic destroyers
+    int republic_fighters;             // Auto-gen: Republic fighters
+    int cis_carriers;                  // Auto-gen: CIS carriers
+    int cis_destroyers;                // Auto-gen: CIS destroyers
+    int cis_fighters;                  // Auto-gen: CIS fighters
 } scenario_t;
 ```
+[\<scenario_t definition\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/CC/scenario.h?plain=1#L30-L53)
 
 ---
 
@@ -704,7 +894,7 @@ void tick_barrier(ipc_ctx_t *ctx);
 
 #### Combat
 ```c
-float damage_multiplyer(unit_type_t unit, unit_type_t target);
+float damage_multiplier(unit_type_t unit, unit_type_t target);
 float accuracy_multiplier(weapon_type_t weapon, unit_type_t target);
 st_points_t damage_to_target(unit_entity_t *attacker, 
                               unit_entity_t *target,

@@ -12,7 +12,7 @@ calculates damage multiplier based on attacker type and target type
     return (float):
         multiplier applied to base weapon damage
 */
-float damage_multiplyer(unit_type_t unit, unit_type_t target);
+float damage_multiplier(unit_type_t unit, unit_type_t target);
 
 /*
 calculates accuracy multiplier based on weapon type and target type

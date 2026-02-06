@@ -187,7 +187,7 @@ unit_id_t unit_chose_secondary_target(ipc_ctx_t *ctx,
         // if (u[detected_id[i]].faction == u[unit_id].faction) continue;
         t_type = u[detected_id[i]].type;
         u_type = u[unit_id].type;
-        multi = damage_multiplyer(u_type, t_type);
+        multi = damage_multiplier(u_type, t_type);
         if (max_multi > multi) continue;
         max_multi = multi;
         max_id = detected_id[i];

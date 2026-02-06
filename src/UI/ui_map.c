@@ -78,6 +78,8 @@ static void render_map(ui_context_t *ui_ctx, unit_id_t grid[M][N], uint32_t tick
             /* Draw cell */
             if (cell == 0) {
                 mvwaddch(win, wy, wx, '.');
+            } else if (cell < 0) {
+                mvwaddch(win, wy, wx, '#');  // Obstacle
             } else {
                 /* Get unit info from shared memory */
                 uint8_t faction = ui_ctx->ctx->S->units[cell].faction;
@@ -167,7 +169,7 @@ void* ui_map_thread(void* arg) {
         }
         
         /* Wait before next request */
-        //usleep(200000);  // 200ms = 5 updates/sec
+        usleep(200000);  // 200ms = 5 updates/sec
     }
     
     LOGI("[UI-MAP] Thread exiting");

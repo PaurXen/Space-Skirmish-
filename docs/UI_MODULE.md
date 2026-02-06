@@ -33,16 +33,16 @@ The **UI (User Interface) Module** provides a real-time ncurses-based terminal i
 
 ```
 ┌─────────────────────────────────────────────┐
-│          UI Process (ui_main)                │
+│          UI Process (ui_main)               │
 │  ┌────────────────────────────────────────┐ │
 │  │     Main Thread (Input & Control)      │ │
 │  └────────────────────────────────────────┘ │
-│                                              │
+│                                             │
 │  ┌──────────────┐  ┌──────────────┐         │
 │  │  MAP Thread  │  │  UST Thread  │         │
 │  │  (ui_map.c)  │  │  (ui_ust.c)  │         │
 │  └──────────────┘  └──────────────┘         │
-│                                              │
+│                                             │
 │  ┌──────────────┐                           │
 │  │  STD Thread  │                           │
 │  │  (ui_std.c)  │                           │
@@ -90,11 +90,17 @@ The **UI (User Interface) Module** provides a real-time ncurses-based terminal i
 
 **Main UI process** - Initialization, thread management, cleanup.
 
-**Location**: `src/UI/ui_main.c`
+**Location**: `src/UI/ui_main.c`\
+[\<ui_main.c\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/UI/ui_main.c)
+
+**Global Context**:\
+[\<signal_handler\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/UI/ui_main.c?plain=1#L22-L26)
 
 **Key Functions**:
 
 #### `ui_init()`
+[\<ui_init\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/UI/ui_main.c?plain=1#L28-L104)
+
 Initialize ncurses and create windows.
 
 **Responsibilities**:
@@ -116,6 +122,8 @@ if (ui_init(&ui_ctx, run_dir) == -1) {
 ```
 
 #### `ui_cleanup()`
+[\<ui_cleanup\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/UI/ui_main.c?plain=1#L101-L117)
+
 Cleanup ncurses and release resources.
 
 **Responsibilities**:
@@ -131,6 +139,8 @@ ui_cleanup(&ui_ctx);
 ```
 
 #### `ui_refresh_all()`
+[\<ui_refresh_all\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/UI/ui_main.c?plain=1#L123-L131)
+
 Thread-safe refresh of all windows.
 
 **Thread Safety**: Uses `pthread_mutex_lock()` to prevent concurrent access.
@@ -146,36 +156,50 @@ void ui_refresh_all(ui_context_t *ui_ctx) {
 ```
 
 #### `main()`
+[\<main\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/UI/ui_main.c?plain=1#L133-L255)
+
 Entry point and thread coordinator.
 
 **Flow**:
 1. Parse arguments (`--ftok`, `--run-dir`)
-2. Attach to IPC (`ipc_attach()`)
-3. Initialize UI (`ui_init()`)
-4. Create 3 rendering threads
-5. Main loop: handle keyboard input, refresh display
-6. On exit: signal threads, join, cleanup
+2. Initialize logging (`log_init()`)
+3. Setup signal handlers (SIGINT, SIGTERM)
+4. Attach to IPC (`ipc_attach()`)
+5. Initialize UI (`ui_init()`)
+6. Create 3 rendering threads
+7. Main loop: handle keyboard input (non-blocking), refresh display
+8. On exit: close FIFO, join threads, cleanup
 
 ```c
-// Create threads
-pthread_create(&ui_ctx.map_thread_id, NULL, ui_map_thread, &ui_ctx);
-pthread_create(&ui_ctx.ust_thread_id, NULL, ui_ust_thread, &ui_ctx);
-pthread_create(&ui_ctx.std_thread_id, NULL, ui_std_thread, &ui_ctx);
-
-// Main loop
-while (!ui_ctx.stop) {
-    int ch = getch();  // Non-blocking
+/* Main loop - handle input and refresh */
+while (!g_ui_ctx.stop) {
+    int ch = getch();  // Non-blocking (nodelay enabled)
+    
     if (ch == 'q' || ch == 'Q') {
-        ui_ctx.stop = 1;
+        g_ui_ctx.stop = 1;
+        LOGI("[UI] User requested quit");
+        break;
     }
-    ui_refresh_all(&ui_ctx);
-    usleep(50000);  // 50ms
+    
+    /* Refresh all windows */
+    ui_refresh_all(&g_ui_ctx);
 }
 
-// Cleanup
-pthread_join(ui_ctx.map_thread_id, NULL);
-// ... join other threads
-ui_cleanup(&ui_ctx);
+/* Close FIFO to unblock STD thread */
+if (g_ui_ctx.std_fifo_fd != -1) {
+    close(g_ui_ctx.std_fifo_fd);
+    g_ui_ctx.std_fifo_fd = -1;
+}
+unlink("/tmp/skirmish_std.fifo");
+
+/* Wait for threads to finish */
+pthread_join(g_ui_ctx.map_thread_id, NULL);
+pthread_join(g_ui_ctx.ust_thread_id, NULL);
+pthread_join(g_ui_ctx.std_thread_id, NULL);
+
+/* Cleanup */
+ui_cleanup(&g_ui_ctx);
+ipc_detach(&ctx);
 ```
 
 ---
@@ -184,13 +208,16 @@ ui_cleanup(&ui_ctx);
 
 **MAP thread** - Real-time grid visualization.
 
-**Location**: `src/UI/ui_map.c`
+**Location**: `src/UI/ui_map.c`\
+[\<ui_map.c\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/UI/ui_map.c)
 
 **Rendering Strategy**: Request-response pattern with Command Center.
 
 **Key Functions**:
 
 #### `ui_map_thread()`
+[\<ui_map_thread\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/UI/ui_map.c?plain=1#L131-L175)
+
 Main thread loop for grid display.
 
 **Algorithm**:
@@ -203,48 +230,57 @@ repeat:
        b. Copy grid from shared memory
        c. Unlock semaphore
        d. Render grid to MAP window
-    4. Sleep briefly (10ms)
-goto repeat
+goto repeat until stop flag set
 ```
+
+**Note**: The usleep() call is commented out in current implementation.
 
 **Code**:
 ```c
 void* ui_map_thread(void* arg) {
     ui_context_t *ui_ctx = (ui_context_t*)arg;
+    uint32_t last_tick = 0;
     
+    LOGI("[UI-MAP] Thread started, sending requests to CC");
+    
+    /* Request-response loop */
     while (!ui_ctx->stop) {
-        // Request snapshot
-        mq_ui_map_req_t req = {
-            .mtype = MSG_UI_MAP_REQ,
-            .sender = getpid()
-        };
-        mq_send_ui_map_req(ui_ctx->ctx->q_req, &req);
+        /* Send request for map snapshot */
+        mq_ui_map_req_t req;
+        req.mtype = MSG_UI_MAP_REQ;
+        req.sender = getpid();
         
-        // Wait for response
-        mq_ui_map_rep_t rep;
-        if (mq_recv_ui_map_rep_blocking(ui_ctx->ctx->q_rep, &rep) > 0) {
-            if (rep.ready) {
-                // Lock and copy grid
+        if (mq_send_ui_map_req(ui_ctx->ctx->q_req, &req) == 0) {
+            /* Wait for response (blocking) */
+            mq_ui_map_rep_t rep;
+            int ret = mq_recv_ui_map_rep_blocking(ui_ctx->ctx->q_rep, &rep);
+            
+            if (ret > 0 && rep.ready) {
+                /* Got notification, read grid from shared memory */
                 sem_lock(ui_ctx->ctx->sem_id, SEM_GLOBAL_LOCK);
-                unit_id_t grid[M][N];
-                memcpy(grid, ui_ctx->ctx->S->grid, sizeof(grid));
+                
+                /* Copy grid from shared memory */
+                unit_id_t grid_snapshot[M][N];
+                memcpy(grid_snapshot, ui_ctx->ctx->S->grid, sizeof(grid_snapshot));
                 uint32_t tick = ui_ctx->ctx->S->ticks;
+                
                 sem_unlock(ui_ctx->ctx->sem_id, SEM_GLOBAL_LOCK);
                 
-                // Render
-                render_map(ui_ctx, grid, tick);
-                wrefresh(ui_ctx->map_win);
+                /* Update display */
+                last_tick = tick;
+                render_map(ui_ctx, grid_snapshot, last_tick);
             }
         }
-        
-        usleep(10000);  // 10ms
     }
     
+    LOGI("[UI-MAP] Thread exiting");
     return NULL;
 }
 ```
 
 #### `render_map()`
+[\<render_map\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/UI/ui_map.c?plain=1#L25-L129)
+
 Draw grid to MAP window.
 
 **Rendering Details**:
@@ -263,10 +299,15 @@ static void render_map(ui_context_t *ui_ctx, unit_id_t grid[M][N], uint32_t tick
     pthread_mutex_lock(&ui_ctx->ui_lock);
     
     WINDOW *win = ui_ctx->map_win;
+    if (!win) {
+        pthread_mutex_unlock(&ui_ctx->ui_lock);
+        return;
+    }
+    
     int win_h, win_w;
     getmaxyx(win, win_h, win_w);
     
-    // Clear content (preserve border)
+    /* Clear content area (preserve border) */
     for (int y = 1; y < win_h - 1; y++) {
         wmove(win, y, 1);
         for (int x = 1; x < win_w - 1; x++) {
@@ -274,19 +315,26 @@ static void render_map(ui_context_t *ui_ctx, unit_id_t grid[M][N], uint32_t tick
         }
     }
     
-    // Draw grid cells
-    for (int gy = 0; gy < N && gy < win_h - 2; gy++) {
-        for (int gx = 0; gx < M && gx < win_w - 2; gx++) {
+    /* Calculate available display area (excluding borders) */
+    int content_h = win_h - 2;
+    int content_w = win_w - 2;
+    
+    /* Draw grid at 1:1 scale (one cell = one character) */
+    for (int gy = 0; gy < N && gy < content_h; gy++) {
+        for (int gx = 0; gx < M && gx < content_w; gx++) {
             unit_id_t cell = grid[gx][gy];
             
             int wy = 1 + gy;
             int wx = 1 + gx;
             
+            /* Draw cell */
             if (cell == 0) {
                 mvwaddch(win, wy, wx, '.');
             } else {
+                /* Get unit info from shared memory */
                 uint8_t faction = ui_ctx->ctx->S->units[cell].faction;
                 
+                /* Apply color based on faction */
                 if (faction == FACTION_REPUBLIC) {
                     wattron(win, COLOR_PAIR(COLOR_REPUBLIC));
                     mvwaddch(win, wy, wx, '0' + (cell % 10));
@@ -295,14 +343,29 @@ static void render_map(ui_context_t *ui_ctx, unit_id_t grid[M][N], uint32_t tick
                     wattron(win, COLOR_PAIR(COLOR_CIS));
                     mvwaddch(win, wy, wx, '0' + (cell % 10));
                     wattroff(win, COLOR_PAIR(COLOR_CIS));
+                } else {
+                    mvwaddch(win, wy, wx, '0' + (cell % 10));
                 }
             }
         }
     }
     
-    // Redraw border and title
+    /* Check if map is clipped */
+    int clipped_x = (M > content_w) ? 1 : 0;
+    int clipped_y = (N > content_h) ? 1 : 0;
+    
+    /* Redraw border and title */
     box(win, 0, 0);
-    mvwprintw(win, 0, 2, " MAP %dx%d (1:1) ", M, N);
+    if (clipped_x || clipped_y) {
+        mvwprintw(win, 0, 2, " MAP %dx%d (showing %dx%d) ", 
+                  M, N, 
+                  (M > content_w) ? content_w : M, 
+                  (N > content_h) ? content_h : N);
+    } else {
+        mvwprintw(win, 0, 2, " MAP %dx%d (1:1) ", M, N);
+    }
+    
+    /* Show tick in header */
     mvwprintw(win, 0, win_w - 15, " Tick:%u ", tick);
     
     pthread_mutex_unlock(&ui_ctx->ui_lock);
@@ -315,24 +378,31 @@ static void render_map(ui_context_t *ui_ctx, unit_id_t grid[M][N], uint32_t tick
 
 **UST thread** - Unit Statistics Table display.
 
-**Location**: `src/UI/ui_ust.c`
+**Location**: `src/UI/ui_ust.c`\
+[\<ui_ust.c\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/UI/ui_ust.c)
 
 **Key Functions**:
 
 #### `ui_ust_thread()`
+[\<ui_ust_thread\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/UI/ui_ust.c?plain=1#L130-L145)
+
 Main thread loop for unit statistics.
 
 **Algorithm**:
 ```
 repeat:
-    1. Lock semaphore (SEM_GLOBAL_LOCK)
-    2. Copy unit array from shared memory
-    3. Copy tick counter
-    4. Unlock semaphore
-    5. Render unit table to UST window
-    6. Sleep 100ms
-goto repeat
+    1. Call render_ust() to:
+       a. Lock UI mutex
+       b. Lock semaphore (SEM_GLOBAL_LOCK)
+       c. Copy unit array from shared memory
+       d. Copy tick counter
+       e. Unlock semaphore
+       f. Render unit table to UST window
+       g. Unlock UI mutex
+goto repeat until stop flag set
 ```
+
+**Note**: The usleep() call is commented out in current implementation.
 
 **Code**:
 ```c
@@ -350,6 +420,8 @@ void* ui_ust_thread(void* arg) {
 ```
 
 #### `render_ust()`
+[\<render_ust\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/UI/ui_ust.c?plain=1#L43-L128)
+
 Draw unit statistics table.
 
 **Table Format**:
@@ -366,59 +438,87 @@ ID Type       Faction   HP    Pos      PID
 - **ID**: Unit ID (1-64)
 - **Type**: Flagship, Destroyer, Carrier, Fighter, Bomber, Elite
 - **Faction**: Republic (blue), CIS (red)
-- **HP**: Current hit points
+- **HP**: Current hit points percentage (TODO: calculate based on max HP)
 - **Pos**: (x, y) grid coordinates
 - **PID**: Process ID
+
+**Helper Functions**:\
+[\<get_type_name\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/UI/ui_ust.c?plain=1#L21-L32)\
+[\<get_faction_name\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/UI/ui_ust.c?plain=1#L34-L42)
 
 **Code**:
 ```c
 static void render_ust(ui_context_t *ui_ctx) {
     pthread_mutex_lock(&ui_ctx->ui_lock);
+    
     WINDOW *win = ui_ctx->ust_win;
+    if (!win) {
+        pthread_mutex_unlock(&ui_ctx->ui_lock);
+        return;
+    }
     
-    // Lock and copy data
-    sem_lock(ui_ctx->ctx->sem_id, SEM_GLOBAL_LOCK);
-    unit_entity_t units[MAX_UNITS+1];
-    memcpy(units, ui_ctx->ctx->S->units, sizeof(units));
-    uint32_t tick = ui_ctx->ctx->S->ticks;
-    sem_unlock(ui_ctx->ctx->sem_id, SEM_GLOBAL_LOCK);
+    int win_h, win_w;
+    getmaxyx(win, win_h, win_w);
     
-    // Clear window
+    /* Clear window content */
     werase(win);
     box(win, 0, 0);
     mvwprintw(win, 0, 2, " UNIT STATS ");
+    
+    /* Lock shared memory and read unit data */
+    sem_lock(ui_ctx->ctx->sem_id, SEM_GLOBAL_LOCK);
+    
+    uint16_t unit_count = ui_ctx->ctx->S->unit_count;
+    uint32_t tick = ui_ctx->ctx->S->ticks;
+    
+    /* Copy unit data */
+    unit_entity_t units[MAX_UNITS+1];
+    memcpy(units, ui_ctx->ctx->S->units, sizeof(units));
+    
+    sem_unlock(ui_ctx->ctx->sem_id, SEM_GLOBAL_LOCK);
+    
+    /* Display header */
     mvwprintw(win, 0, win_w - 15, " Tick:%u ", tick);
     
-    // Table header
+    /* Table header */
     int row = 1;
     wattron(win, A_BOLD);
     mvwprintw(win, row++, 1, "ID Type       Faction   HP    Pos      PID");
     wattroff(win, A_BOLD);
     
-    // Display units
+    /* Display units */
+    int alive_count = 0;
     for (int i = 1; i <= MAX_UNITS && row < win_h - 1; i++) {
         if (units[i].alive) {
-            const char *type = get_type_name(units[i].type);
-            const char *faction = get_faction_name(units[i].faction);
+            alive_count++;
+            int hp_pct = 100;  // TODO: calculate based on max HP
             
-            // Color based on faction
+            /* Color based on faction */
             if (units[i].faction == FACTION_REPUBLIC) {
                 wattron(win, COLOR_PAIR(COLOR_REPUBLIC));
             } else if (units[i].faction == FACTION_CIS) {
                 wattron(win, COLOR_PAIR(COLOR_CIS));
             }
             
-            mvwprintw(win, row++, 1, "%2d %-10s %-9s %-5d (%3d,%3d) %5d",
-                      i, type, faction, units[i].hp,
-                      units[i].position.x, units[i].position.y,
+            mvwprintw(win, row++, 1, "%-2d %-10s %-9s %3d%% (%3d,%3d) %d",
+                      i,
+                      get_type_name(units[i].type),
+                      get_faction_name(units[i].faction),
+                      hp_pct,
+                      units[i].position.x,
+                      units[i].position.y,
                       units[i].pid);
             
-            if (units[i].faction != FACTION_NONE) {
-                wattroff(win, COLOR_PAIR(units[i].faction));
-            }
+            wattroff(win, COLOR_PAIR(units[i].faction));
         }
     }
     
+    /* Show summary at bottom */
+    if (row < win_h - 1) {
+        mvwprintw(win, win_h - 2, 1, "Total: %d/%d alive", alive_count, unit_count);
+    }
+    
+    wrefresh(win);
     pthread_mutex_unlock(&ui_ctx->ui_lock);
 }
 ```
@@ -429,13 +529,16 @@ static void render_ust(ui_context_t *ui_ctx) {
 
 **STD thread** - Standard output log display via FIFO.
 
-**Location**: `src/UI/ui_std.c`
+**Location**: `src/UI/ui_std.c`\
+[\<ui_std.c\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/UI/ui_std.c)
 
 **Communication**: Reads from `/tmp/skirmish_std.fifo` (written by terminal_tee).
 
 **Key Functions**:
 
 #### `ui_std_thread()`
+[\<ui_std_thread\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/UI/ui_std.c?plain=1#L21-L210)
+
 Main thread loop for output logging.
 
 **Algorithm**:
@@ -456,31 +559,53 @@ Main thread loop for output logging.
 
 **Code**:
 ```c
+#define FIFO_PATH "/tmp/skirmish_std.fifo"
+#define BUFFER_SIZE 4096
+
 void *ui_std_thread(void *arg) {
     ui_context_t *ui_ctx = (ui_context_t *)arg;
-    char buffer[4096];
+    char buffer[BUFFER_SIZE];
     int fifo_fd = -1;
+    int created_fifo = 0;
     
-    // Create FIFO
-    if (mkfifo("/tmp/skirmish_std.fifo", 0666) == -1 && errno != EEXIST) {
-        // Non-critical error
+    /* Try to create FIFO if it doesn't exist */
+    if (access(FIFO_PATH, F_OK) != 0) {
+        if (mkfifo(FIFO_PATH, 0666) == 0) {
+            created_fifo = 1;
+        } else if (errno != EEXIST) {
+            /* Failed to create FIFO - not critical */
+            return NULL;
+        }
+    } else {
+        created_fifo = 1;  // FIFO already exists
+    }
+    
+    pthread_mutex_lock(&ui_ctx->ui_lock);
+    if (ui_ctx->std_win) {
+        mvwprintw(ui_ctx->std_win, 1, 1, "[STD] Waiting for command_center...");
+        wrefresh(ui_ctx->std_win);
+    }
+    pthread_mutex_unlock(&ui_ctx->ui_lock);
+    
+    /* Open FIFO in BLOCKING mode - waits for writer (tee) to connect */
+    fifo_fd = open(FIFO_PATH, O_RDONLY);
+    if (fifo_fd == -1) {
+        if (created_fifo) unlink(FIFO_PATH);
         return NULL;
     }
     
-    // Open FIFO (blocks until writer connects)
-    fifo_fd = open("/tmp/skirmish_std.fifo", O_RDONLY);
-    if (fifo_fd == -1) return NULL;
-    
     ui_ctx->std_fifo_fd = fifo_fd;
+    LOGI("[UI-STD] Connected to tee via FIFO");
     
-    int line = 2;  // Start after title
+    /* Read loop */
+    int line = 2;
     int max_y, max_x;
     
     while (!ui_ctx->stop) {
         ssize_t bytes = read(fifo_fd, buffer, sizeof(buffer) - 1);
         
         if (bytes <= 0) {
-            if (bytes == 0) break;  // EOF
+            if (bytes == 0) break;  /* EOF - tee closed the pipe */
             if (errno == EINTR || errno == EAGAIN) continue;
             break;
         }
@@ -489,37 +614,41 @@ void *ui_std_thread(void *arg) {
         
         pthread_mutex_lock(&ui_ctx->ui_lock);
         
+        if (!ui_ctx->std_win) {
+            pthread_mutex_unlock(&ui_ctx->ui_lock);
+            break;
+        }
+        
         getmaxyx(ui_ctx->std_win, max_y, max_x);
         
-        // Parse and display lines
+        /* Parse buffer and write line by line with wrapping */
         char *line_start = buffer;
         char *newline;
         
         while ((newline = strchr(line_start, '\n')) != NULL) {
             *newline = '\0';
-            
-            // Wrap long lines
             int len = strlen(line_start);
             int max_line_width = max_x - 2;
             
             int offset = 0;
-            while (offset < len) {
-                // Scroll if needed
+            while (offset < len || len == 0) {
                 if (line >= max_y - 1) {
                     wscrl(ui_ctx->std_win, 1);
                     line = max_y - 2;
                 }
                 
-                // Display chunk
                 wmove(ui_ctx->std_win, line, 1);
                 wclrtoeol(ui_ctx->std_win);
                 
                 int chunk_len = (len - offset > max_line_width) ? 
                                 max_line_width : (len - offset);
-                waddnstr(ui_ctx->std_win, line_start + offset, chunk_len);
+                if (chunk_len > 0) {
+                    waddnstr(ui_ctx->std_win, line_start + offset, chunk_len);
+                }
                 
-                offset += chunk_len;
+                offset += (chunk_len > 0) ? chunk_len : 1;
                 line++;
+                if (len == 0) break;
             }
             
             line_start = newline + 1;
@@ -530,8 +659,9 @@ void *ui_std_thread(void *arg) {
     }
     
     close(fifo_fd);
-    unlink("/tmp/skirmish_std.fifo");
+    unlink(FIFO_PATH);
     
+    LOGI("[UI-STD] Thread exiting");
     return NULL;
 }
 ```
@@ -592,9 +722,9 @@ std_win = newwin(bottom_height, max_x, map_height, 0);
 
 | Thread | Purpose | Update Rate | Blocking |
 |--------|---------|-------------|----------|
-| Main | Input handling, coordination | 50ms | No |
+| Main | Input handling, coordination | Continuous | No (nodelay) |
 | MAP | Grid visualization | Request-response | Yes (on msgrcv) |
-| UST | Unit statistics | 100ms | No |
+| UST | Unit statistics | Continuous | No |
 | STD | Output logging | Event-driven | Yes (on read) |
 
 ### Thread Safety
@@ -667,6 +797,26 @@ doupdate();  // Single physical refresh
 ---
 
 ## Data Flow
+
+### UI Message Types
+
+The UI uses request-response message queues to synchronize with Command Center:\
+[\\<ipc_mesq.h\\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/ipc/ipc_mesq.h?plain=1#L113-L128)
+
+```c
+/* UI Map snapshot request */
+typedef struct {
+    long mtype;          // MSG_UI_MAP_REQ (= 7)
+    pid_t sender;        // UI pid
+} mq_ui_map_req_t;
+
+/* UI Map snapshot response */
+typedef struct {
+    long mtype;          // MSG_UI_MAP_REP (= 8)
+    uint32_t tick;
+    int ready;           // 1 = grid snapshot ready in shared memory
+} mq_ui_map_rep_t;
+```
 
 ### MAP Thread Data Flow
 
@@ -802,23 +952,26 @@ Command Center          terminal_tee           UI STD Thread
 ```c
 int ui_init(ui_context_t *ui_ctx, const char *run_dir);
 ```
+[\<ui_init\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/UI/ui_main.c?plain=1#L28-L104)
 - **Purpose**: Initialize ncurses, create windows, setup colors
 - **Parameters**: 
   - `ui_ctx`: UI context to initialize
   - `run_dir`: Run directory path (optional, can be NULL)
 - **Returns**: 0 on success, -1 on error
-- **Side Effects**: Initializes ncurses, creates windows
+- **Side Effects**: Initializes ncurses, creates windows, initializes mutex
 
 ```c
 void ui_cleanup(ui_context_t *ui_ctx);
 ```
+[\<ui_cleanup\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/UI/ui_main.c?plain=1#L106-L121)
 - **Purpose**: Cleanup ncurses and release resources
 - **Parameters**: `ui_ctx`: UI context to cleanup
-- **Side Effects**: Ends ncurses, destroys windows, removes FIFO
+- **Side Effects**: Ends ncurses, destroys windows, removes FIFO, destroys mutex
 
 ```c
 void ui_refresh_all(ui_context_t *ui_ctx);
 ```
+[\<ui_refresh_all\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/UI/ui_main.c?plain=1#L123-L131)
 - **Purpose**: Thread-safe refresh of all windows
 - **Thread Safe**: Yes (uses mutex)
 
@@ -829,6 +982,7 @@ void ui_refresh_all(ui_context_t *ui_ctx);
 ```c
 void* ui_map_thread(void* arg);
 ```
+[\<ui_map_thread\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/UI/ui_map.c?plain=1#L131-L175)
 - **Purpose**: MAP rendering thread
 - **Parameters**: `arg`: Pointer to `ui_context_t`
 - **Returns**: NULL on exit
@@ -837,14 +991,16 @@ void* ui_map_thread(void* arg);
 ```c
 void* ui_ust_thread(void* arg);
 ```
+[\<ui_ust_thread\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/UI/ui_ust.c?plain=1#L130-L145)
 - **Purpose**: UST rendering thread
 - **Parameters**: `arg`: Pointer to `ui_context_t`
 - **Returns**: NULL on exit
-- **Behavior**: Periodic polling (100ms) of shared memory
+- **Behavior**: Continuous polling of shared memory
 
 ```c
 void* ui_std_thread(void* arg);
 ```
+[\<ui_std_thread\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/UI/ui_std.c?plain=1#L20-L210)
 - **Purpose**: STD output logging thread
 - **Parameters**: `arg`: Pointer to `ui_context_t`
 - **Returns**: NULL on exit
@@ -856,31 +1012,33 @@ void* ui_std_thread(void* arg);
 
 #### `ui_context_t`
 
-**Purpose**: UI runtime context shared by all threads.
+**Purpose**: UI runtime context shared by all threads.\
+[\<ui_context_t\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/UI/ui.h?plain=1#L17-L41)
 
 ```c
 typedef struct {
     /* ncurses windows */
-    WINDOW *map_win;    // Top-left: grid display
-    WINDOW *ust_win;    // Top-right: unit stats
-    WINDOW *std_win;    // Bottom: output log
+    WINDOW *map_win;    // Top-left: grid map display
+    WINDOW *ust_win;    // Top-right: unit stats table
+    WINDOW *std_win;    // Bottom: standard output log (full width)
     
     /* IPC context */
-    ipc_ctx_t *ctx;     // Shared memory access
+    ipc_ctx_t *ctx;
     
-    /* Communication */
-    char run_dir[512];  // Run directory path
-    int std_fifo_fd;    // FIFO file descriptor
-    int cm_in_fd;       // CM input (unused)
-    int cm_out_fd;      // CM output (unused)
+    /* Communication FIFOs */
+    char run_dir[512];
+    int std_fifo_fd;    // Read from tee
+    int cm_in_fd;       // Write to CM
+    int cm_out_fd;      // Read from CM
     
     /* Thread control */
-    pthread_mutex_t ui_lock;        // ncurses mutex
-    volatile sig_atomic_t stop;     // Stop flag
+    pthread_mutex_t ui_lock;
+    volatile sig_atomic_t stop;
     
     /* Thread IDs */
     pthread_t map_thread_id;
     pthread_t ust_thread_id;
+    pthread_t ucm_thread_id;
     pthread_t std_thread_id;
 } ui_context_t;
 ```
@@ -1005,23 +1163,26 @@ void demo_colors(WINDOW *win) {
 
 ```
 src/UI/
-├── ui_main.c             # Main UI process
-├── ui_map.c              # MAP rendering thread
-├── ui_ust.c              # UST rendering thread
-└── ui_std.c              # STD output thread
+├── ui_main.c             # Main UI process (256 lines)
+├── ui_map.c              # MAP rendering thread (176 lines)
+└── ui_ust.c              # UST rendering thread (150 lines)
 
 include/UI/
 ├── ui.h                  # UI context structure
 ├── ui_map.h              # MAP thread interface
-├── ui_ust.h              # UST thread interface
-└── ui_std.h              # STD thread interface
+└── ui_ust.h              # UST thread interface
 ```
+
+[\<ui_main.c\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/UI/ui_main.c)\
+[\<ui_map.c\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/UI/ui_map.c)\
+[\<ui_ust.c\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/src/UI/ui_ust.c)\
+[\<ui.h\>](https://github.com/PaurXen/Space-Skirmish-/blob/main/include/UI/ui.h)
 
 ---
 
 ## Build Integration
 
-From project `Makefile`:
+From project [Makefile](https://github.com/PaurXen/Space-Skirmish-/blob/main/Makefile):
 
 ```makefile
 # UI object files
@@ -1103,11 +1264,13 @@ if (!ui_ctx->map_win) {
 
 ### Reducing CPU Usage
 
-**Current Rates**:
-- Main thread: 50ms refresh (20 Hz)
-- MAP thread: Request-response (10-50 Hz depending on CC)
-- UST thread: 100ms refresh (10 Hz)
-- STD thread: Event-driven (no polling)
+**Current Rates** (from source code):
+- Main thread: Continuous (no sleep, nodelay getch)
+- MAP thread: Request-response driven (depends on CC response time)
+- UST thread: Continuous (no sleep in current implementation)
+- STD thread: Event-driven (blocks on FIFO read)
+
+**Note**: The usleep() calls in threads are currently commented out in the source code.
 
 **Optimization**:
 ```c
